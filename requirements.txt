@@ -1,3 +1,6 @@
 streamlit
 pandas
 altair
+vl-convert-python
+openpyxl
+reportlab

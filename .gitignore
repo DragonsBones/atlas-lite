@@ -1,3 +1,18 @@
+# Environment
+.env
+
+# Python
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# Streamlit (if you later add secrets)
+.streamlit/secrets.toml
