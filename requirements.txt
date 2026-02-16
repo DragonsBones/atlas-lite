@@ -4,3 +4,4 @@ altair
 vl-convert-python
 openpyxl
 reportlab
+pillow

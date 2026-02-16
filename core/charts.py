@@ -44,7 +44,7 @@ def bar_chart(
         ],
     )
 
-    bars = base.mark_bar(color="#1f4e79")
+    bars = base.mark_bar(color="#1f4e79", size=18)
 
     chart = bars
 
@@ -58,8 +58,14 @@ def bar_chart(
         )
         chart = alt.layer(bars, labels)
 
+    row_height = 20
+    max_height = 440
+
+    calculated_height = row_height * len(agg) + 40
+    chart_height = min(calculated_height, max_height)
+
     chart = (
-        chart.properties(height=28 * len(agg) + 40)
+        chart.properties(height=chart_height)
         .configure_view(stroke=None)
         .configure_axis(
             labelFontSize=12,
