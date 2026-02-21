@@ -3,32 +3,58 @@ from __future__ import annotations
 import io
 from PIL import Image, ImageDraw, ImageFont
 
-def add_png_watermark(png_bytes: bytes, text: str = "Atlas Lite") -> bytes:
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def add_png_watermark(
+    png_bytes: bytes,
+    text: str = "Atlas Lite",
+    bg_color: str = "#F4EFE6",
+) -> bytes:
     """
-    Adds a semi-transparent diagonal tiled watermark to a PNG (bytes).
-    Returns new PNG bytes.
+    Stamps an embossed text watermark in the bottom-right corner of the chart
+    canvas. The effect uses a light highlight offset and a dark shadow offset
+    on a background-toned fill so the mark reads as pressed/raised rather than
+    as an obtrusive label. Falls back gracefully if font loading fails.
     """
     base = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
     w, h = base.size
 
-    overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    # Font: try Arial; fallback safely
+    # Font — scale with image so it stays proportional at any export scale
+    font_size = max(14, int(min(w, h) * 0.017))
     try:
-        font_size = max(18, int(min(w, h) * 0.06))
         font = ImageFont.truetype("arial.ttf", font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    # Tile the watermark so cropping/snips still show it
-    step = max(140, int(min(w, h) * 0.18))
-    for y in range(-h, h * 2, step):
-        for x in range(-w, w * 2, step):
-            draw.text((x, y), text, fill=(0, 0, 0, 22), font=font)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
 
-    # Diagonal
-    overlay = overlay.rotate(-30, resample=Image.BICUBIC, expand=False)
+    margin_x = max(18, w // 36)
+    margin_y = max(14, h // 36)
+    x = w - tw - margin_x
+    y = h - th - margin_y
+
+    # Derive emboss colours from the chart background
+    bg = _hex_to_rgb(bg_color)
+    # Highlight: blend bg toward white (~40% lighter)
+    highlight = tuple(min(255, int(c + (255 - c) * 0.55)) for c in bg) + (170,)
+    # Shadow: darken bg (~28%)
+    shadow = tuple(max(0, int(c * 0.72)) for c in bg) + (150,)
+    # Fill: bg colour at low opacity — "invisible ink" that completes the stamp
+    fill = bg + (55,)
+
+    # Raised emboss: highlight top-left, shadow bottom-right
+    draw.text((x - 1, y - 1), text, font=font, fill=highlight)
+    draw.text((x + 1, y + 1), text, font=font, fill=shadow)
+    draw.text((x,     y    ), text, font=font, fill=fill)
 
     out = Image.alpha_composite(base, overlay).convert("RGB")
     buf = io.BytesIO()

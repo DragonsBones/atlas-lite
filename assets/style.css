@@ -1,0 +1,61 @@
+/* ── Atlas Lite — UI Shell Styles ─────────────────────────── */
+
+/* Hide dataframe column headers — replaced by chip buttons in the Data panel */
+div[data-testid="stDataFrame"] thead {
+    visibility: collapse !important;
+    height: 0 !important;
+}
+div[data-testid="stDataFrame"] [role="columnheader"] {
+    visibility: collapse !important;
+    height: 0 !important;
+}
+
+/* Tighten the page title block */
+h1 {
+    font-size: 1.4rem !important;
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+    margin-bottom: 0 !important;
+}
+
+/* Subheadings — clean, not oversized */
+h2, h3 {
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #888888 !important;
+    margin-bottom: 4px !important;
+}
+
+/* Captions — muted */
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: #999999 !important;
+    font-size: 0.78rem !important;
+}
+
+/* Chart image — no border, no box shadow */
+img {
+    border-radius: 4px;
+}
+
+/* Radio buttons — tighter */
+div[role="radiogroup"] label {
+    font-size: 0.82rem !important;
+}
+
+/* Buttons — consistent small size */
+.stButton button {
+    font-size: 0.82rem !important;
+}
+
+/* Download buttons — match */
+.stDownloadButton button {
+    font-size: 0.82rem !important;
+}
+
+/* Remove default Streamlit top padding */
+.block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1rem !important;
+}

@@ -8,6 +8,19 @@ from exports.excel_export import df_to_formatted_xlsx_bytes
 from exports.pdf_export import df_to_pdf_bytes
 from core.watermark import add_png_watermark
 from core.charts import bar_chart, line_chart, scatter_chart, histogram
+from core.recommend import profile_columns, recommend_charts
+
+
+@st.cache_data(show_spinner=False)
+def _cached_profiles(df: pd.DataFrame):
+    return profile_columns(df)
+
+
+@st.cache_data(show_spinner=False)
+def _cached_suggestions(df: pd.DataFrame, user_x: str | None, user_y: str | None):
+    profiles = profile_columns(df)
+    return recommend_charts(df, profiles, user_x=user_x, user_y=user_y)
+
 
 st.set_page_config(page_title="Atlas Lite", layout="wide")
 
@@ -26,7 +39,7 @@ with st.sidebar:
     if data_mode == "Upload file":
         uploaded = st.file_uploader("Upload data (CSV or XLSX)", type=["csv", "xlsx"])
 
-    chart_type = st.selectbox("Chart type", ["Bar", "Line", "Scatter", "Histogram"])
+    chart_type_ui = st.selectbox("Chart type", ["Auto", "Bar", "Line", "Scatter", "Histogram"])
     st.subheader("Chart settings")
 
 # -----------------------------
@@ -35,7 +48,6 @@ with st.sidebar:
 df = None
 
 if data_mode == "Demo dataset (dev)":
-    # Change this path if your demo file differs
     df = load_data("demo_data/bh_completed_by_mon.csv")
 else:
     if not uploaded:
@@ -45,7 +57,7 @@ else:
         st.stop()
     df = load_data(uploaded)
 
-# Clean column names defensively (narwhals/Altair likes strings)
+# Clean column names defensively (Altair likes strings)
 df.columns = [str(c).strip() for c in df.columns]
 
 numeric_cols = df.select_dtypes(include="number").columns.tolist()
@@ -55,58 +67,58 @@ if not numeric_cols:
     st.error("No numeric columns detected.")
     st.stop()
 
-# Defaults (your existing logic; bar-leaning but fine)
+# -----------------------------
+# Auto recommendation (translate Auto -> concrete chart + suggested defaults)
+# -----------------------------
+auto_info = None
+auto_suggestions = None
+chart_type = chart_type_ui  # working chart type (may be overridden by Auto)
 
-def pick_default_xy(chart_type, numeric_cols, cat_cols, df):
-    if chart_type == "Scatter":
-        if len(numeric_cols) >= 2:
-            return numeric_cols[0], numeric_cols[1]
-        if len(numeric_cols) == 1:
-            return numeric_cols[0], numeric_cols[0]  # fallback, will be handled
+if chart_type_ui == "Auto":
+    auto_suggestions = _cached_suggestions(df, None, None)
+    auto_info = auto_suggestions[0]
+
+    label_map = {"bar": "Bar", "line": "Line", "scatter": "Scatter", "histogram": "Histogram"}
+    chart_type = label_map.get(auto_info.chart_type, "Bar")
+
+
+# Defaults (your existing logic; bar-leaning but fine)
+def pick_default_xy(chart_type_local, numeric_cols_local, cat_cols_local, df_local):
+    if chart_type_local == "Scatter":
+        if len(numeric_cols_local) >= 2:
+            return numeric_cols_local[0], numeric_cols_local[1]
+        if len(numeric_cols_local) == 1:
+            return numeric_cols_local[0], numeric_cols_local[0]  # fallback, will be handled
         return None, None
 
-    if chart_type == "Histogram":
-        return (numeric_cols[0], None) if numeric_cols else (None, None)
+    if chart_type_local == "Histogram":
+        return (numeric_cols_local[0], None) if numeric_cols_local else (None, None)
 
-    if chart_type == "Line":
+    if chart_type_local == "Line":
         # Prefer a datetime-like column
-        for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
-                return col, numeric_cols[0]
+        for col in df_local.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_local[col]):
+                return col, numeric_cols_local[0]
         # Fallback: use first column as X (often Month) and first numeric as Y
-        return df.columns[0], numeric_cols[0]
+        return df_local.columns[0], numeric_cols_local[0]
 
     # Bar default (your existing logic)
-    y_default = pick_default_y(numeric_cols)
-    x_default = pick_default_x(df, cat_cols, y_default) if cat_cols else df.columns[0]
+    y_default = pick_default_y(numeric_cols_local)
+    x_default = pick_default_x(df_local, cat_cols_local, y_default) if cat_cols_local else df_local.columns[0]
     return x_default, y_default
 
 
 default_x, default_y = pick_default_xy(chart_type, numeric_cols, cat_cols, df)
 
-# Build candidate lists based on chart type
-if chart_type in ["Scatter", "Histogram"]:
-    x_candidates = numeric_cols
-else:
-    x_candidates = cat_cols if cat_cols else df.columns.tolist()
+# If Auto suggested X/Y, prefer them as defaults (without breaking existing logic)
+if auto_info is not None:
+    sx = auto_info.spec.get("x")
+    sy = auto_info.spec.get("y")
 
-# Safe X index
-x_index = x_candidates.index(default_x) if default_x in x_candidates else 0
-
-# Y handling
-if chart_type in ["Bar", "Line", "Scatter"]:
-    # Prevent scatter defaulting X==Y
-    if chart_type == "Scatter":
-        y_candidates = [c for c in numeric_cols if c != x_candidates[x_index]]
-        if not y_candidates:
-            y_candidates = numeric_cols  # last resort
-    else:
-        y_candidates = numeric_cols
-
-    y_index = y_candidates.index(default_y) if default_y in y_candidates else 0
-else:
-    y_candidates = []
-    y_index = 0
+    if sx in df.columns:
+        default_x = sx
+    if sy in df.columns:
+        default_y = sy
 
 # -----------------------------
 # Sidebar: Chart controls (single source of truth)
@@ -151,8 +163,9 @@ with st.sidebar:
     else:
         # safe defaults for non-bar charts
         sort_desc, as_rate, top_n, show_labels = True, False, 20, False
+
 # -----------------------------
-# Build selected chart (correct if/elif chain)
+# Build selected chart (explicit if/elif chain)
 # -----------------------------
 if chart_type == "Bar":
     chart_clean = bar_chart(
@@ -166,8 +179,11 @@ elif chart_type == "Line":
     chart_clean = line_chart(df, x_col, y_col)
 elif chart_type == "Scatter":
     chart_clean = scatter_chart(df, x_col, y_col)
-else:  # Histogram
+elif chart_type == "Histogram":
     chart_clean = histogram(df, x_col, bins=30)
+else:
+    st.error(f"Unknown chart type: {chart_type}")
+    st.stop()
 
 # -----------------------------
 # Build preview image (watermarked)
@@ -218,7 +234,7 @@ if st.session_state.get("export_entitled", False):
 # -----------------------------
 st.title("Atlas Lite")
 st.caption("Clean charts with presentation-ready exports.")
-st.caption(f"{chart_type} • {uploaded.name if uploaded else 'Demo dataset'}")
+st.caption(f"{chart_type_ui} • {uploaded.name if uploaded else 'Demo dataset'}")
 
 left_top, right_top = st.columns([2, 1], gap="large")
 left_bottom, right_bottom = st.columns([2, 1], gap="large")
@@ -236,6 +252,16 @@ with right_top:
     st.write(f"**X:** {x_col}")
     if y_col:
         st.write(f"**Y:** {y_col}")
+
+    if auto_info is not None:
+        st.write(f"**Auto confidence:** {auto_info.confidence}%")
+        st.caption(auto_info.reason)
+
+        if auto_suggestions is not None:
+            with st.expander("Other auto suggestions"):
+                for s in auto_suggestions[1:]:
+                    st.write(f"- `{s.chart_type}` ({s.confidence}%) — {s.reason}")
+
     if chart_type == "Bar":
         st.write(f"**Top N:** {top_n}")
         st.write(f"**Sorted desc:** {sort_desc}")
