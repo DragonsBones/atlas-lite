@@ -44,7 +44,7 @@ MIDAS = AtlasStyle(
     grid_stroke_width=0.5,
     axis_label_color="#555555",     # shared fallback
     axis_title_color="#2A2A2A",
-    axis_x_label_color="#7A7A7A",   # numeric tick labels — most muted element
+    axis_x_label_color="#919191",   # numeric tick labels — most muted element
     axis_y_label_color="#4A4A4A",   # category names — readable but not bold
 )
 

@@ -44,9 +44,27 @@ div[role="radiogroup"] label {
     font-size: 0.82rem !important;
 }
 
-/* Buttons — consistent small size */
+/* Buttons — consistent small size with tight vertical padding */
 .stButton button {
     font-size: 0.82rem !important;
+    padding-top: 0.2rem !important;
+    padding-bottom: 0.2rem !important;
+    line-height: 1.3 !important;
+}
+
+/* Column chip buttons — compact selector buttons inside the Data tab */
+.stTabs .stButton button {
+    font-size: 0.66rem !important;
+    padding-top: 0.1rem !important;
+    padding-bottom: 0.1rem !important;
+    min-height: 0 !important;
+    line-height: 1.2 !important;
+    width: 70% !important;
+}
+
+/* Reduce gap between stacked chip buttons in the column picker */
+.stButton + .stButton {
+    margin-top: 2px !important;
 }
 
 /* Download buttons — match */
@@ -56,6 +74,33 @@ div[role="radiogroup"] label {
 
 /* Remove default Streamlit top padding */
 .block-container {
-    padding-top: 1.5rem !important;
+    padding-top: 1.0rem !important;
     padding-bottom: 1rem !important;
+}
+
+/* Tighten the gap between radio options in horizontal groups */
+div[data-testid="stRadio"] > div[role="radiogroup"] {
+    gap: 0.25rem !important;
+}
+
+/* Reduce the blank space Streamlit adds above each widget label */
+div[data-testid="stRadio"],
+div[data-testid="stSlider"],
+div[data-testid="stToggle"] {
+    margin-bottom: 0 !important;
+}
+
+/* Compact tab bar */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 2px;
+}
+.stTabs [data-baseweb="tab"] {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    font-size: 0.82rem !important;
+}
+
+/* Tab panel — breathing room between tab bar and content */
+.stTabs [data-baseweb="tab-panel"] {
+    padding-top: 0.75rem !important;
 }

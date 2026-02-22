@@ -27,7 +27,7 @@ def add_png_watermark(
     draw = ImageDraw.Draw(overlay)
 
     # Font — scale with image so it stays proportional at any export scale
-    font_size = max(14, int(min(w, h) * 0.017))
+    font_size = max(13, int(min(w, h) * 0.015))
     try:
         font = ImageFont.truetype("arial.ttf", font_size)
     except Exception:
@@ -45,11 +45,11 @@ def add_png_watermark(
     # Derive emboss colours from the chart background
     bg = _hex_to_rgb(bg_color)
     # Highlight: blend bg toward white (~40% lighter)
-    highlight = tuple(min(255, int(c + (255 - c) * 0.55)) for c in bg) + (170,)
+    highlight = tuple(min(255, int(c + (255 - c) * 0.55)) for c in bg) + (130,)
     # Shadow: darken bg (~28%)
-    shadow = tuple(max(0, int(c * 0.72)) for c in bg) + (150,)
+    shadow = tuple(max(0, int(c * 0.72)) for c in bg) + (110,)
     # Fill: bg colour at low opacity — "invisible ink" that completes the stamp
-    fill = bg + (55,)
+    fill = bg + (38,)
 
     # Raised emboss: highlight top-left, shadow bottom-right
     draw.text((x - 1, y - 1), text, font=font, fill=highlight)

@@ -44,7 +44,7 @@ def _apply_style(chart: alt.Chart, style: AtlasStyle) -> alt.Chart:
             subtitleColor=style.text_secondary,
             subtitleFontWeight=400,
             anchor="start",
-            offset=6,
+            offset=12,
         )
     )
 
@@ -74,15 +74,19 @@ def bar_chart(
         if total > 0:
             agg[y_col] = (agg[y_col] / total) * 100
 
-    agg = agg.sort_values(y_col, ascending=not sort_desc).head(top_n)
+    # Always take the top-N highest-value rows; sort_desc only controls display order
+    agg = agg.sort_values(y_col, ascending=False).head(top_n)
 
     value_format = ".1f" if as_rate else ",.0f"
     x_axis_title = "% of total" if as_rate else None
     primary = style.data_palette[0]
     x_max = agg[y_col].max() * 1.05  # 5% headroom so longest bar never touches boundary
+    # sort_desc=True  → bars ordered by value descending (highest at top)
+    # sort_desc=False → bars ordered alphabetically (A→Z / 0→9)
+    y_sort = "-x" if sort_desc else "ascending"
 
     base = alt.Chart(agg).encode(
-        y=alt.Y(f"{x_col}:N", sort="-x", title=None, scale=alt.Scale(paddingInner=0.40)),
+        y=alt.Y(f"{x_col}:N", sort=y_sort, title=None, scale=alt.Scale(paddingInner=0.40)),
         x=alt.X(
             f"{y_col}:Q",
             title=x_axis_title,

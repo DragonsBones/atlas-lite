@@ -24,7 +24,6 @@ st.session_state.setdefault("chart_type_ui", "Auto")
 st.session_state.setdefault("x_col", None)
 st.session_state.setdefault("y_col", None)
 st.session_state.setdefault("assign_target", "X")
-st.session_state.setdefault("prev_chart_type_ui", "Auto")
 st.session_state.setdefault("export_entitled", False)
 st.session_state.setdefault("top_n", 20)
 st.session_state.setdefault("sort_desc", True)
@@ -155,20 +154,13 @@ with left:
 
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
-    # ── Chart type selector (at left level — depth 1) ─────────
-    st.radio(
-        "",
-        ["Auto", "Bar", "Line", "Scatter", "Histogram"],
-        horizontal=True,
-        key="chart_type_ui",
-    )
-
     mode_now = st.session_state["chart_type_ui"]
-    prev_mode = st.session_state["prev_chart_type_ui"]
 
-    # Normalise X/Y when switching chart types
-    if mode_now != prev_mode:
-        if mode_now == "Scatter":
+    # Normalise X/Y inline — no extra st.rerun() needed, chart builds in one pass
+    if mode_now == "Scatter":
+        _x = st.session_state.get("x_col")
+        _y = st.session_state.get("y_col")
+        if _x not in numeric_cols or _y not in numeric_cols or _x == _y:
             if len(numeric_cols) >= 2:
                 st.session_state["x_col"] = numeric_cols[0]
                 st.session_state["y_col"] = numeric_cols[1]
@@ -178,15 +170,10 @@ with left:
             else:
                 st.session_state["x_col"] = None
                 st.session_state["y_col"] = None
-
-        if mode_now == "Histogram":
+    elif mode_now == "Histogram":
+        if st.session_state.get("x_col") not in numeric_cols:
             st.session_state["x_col"] = numeric_cols[0] if numeric_cols else None
-            st.session_state["y_col"] = None
-
-        st.session_state["prev_chart_type_ui"] = mode_now
-        st.rerun()
-
-    st.session_state["prev_chart_type_ui"] = mode_now
+        st.session_state["y_col"] = None
 
     x_col = st.session_state["x_col"]
     y_col = st.session_state["y_col"]
@@ -199,17 +186,12 @@ with left:
         chart_type = mode_now
         auto_info = None
 
-    # ── Bar controls (at left level — depth 1, so st.columns(4) is valid) ──
+    # Bar controls — read from session state; widgets rendered inside Chart tab
     if chart_type == "Bar":
-        bc1, bc2, bc3, bc4 = st.columns(4)
-        with bc1:
-            top_n = st.slider("Top N", 5, 50, st.session_state["top_n"], 5, key="top_n")
-        with bc2:
-            sort_desc = st.toggle("Sort desc", value=st.session_state["sort_desc"], key="sort_desc")
-        with bc3:
-            as_rate = st.toggle("% of total", value=st.session_state["as_rate"], key="as_rate")
-        with bc4:
-            show_labels = st.toggle("Labels", value=st.session_state["show_labels"], key="show_labels")
+        top_n = st.session_state.get("top_n", 20)
+        sort_desc = st.session_state.get("sort_desc", True)
+        as_rate = st.session_state.get("as_rate", False)
+        show_labels = st.session_state.get("show_labels", True)
     else:
         top_n, sort_desc, as_rate, show_labels = 20, True, False, True
 
@@ -226,17 +208,20 @@ with left:
     else:
         _chart_title = "Chart"
 
-    # Build chart before rendering so both chips_col and chart_col can access it
+    # Build chart before tabs render so result is available in Chart tab
     chart = None
+    png_watermarked = None
+    _chart_warning = None
+    _chart_error = None
     try:
         if chart_type == "Scatter" and (x_col is None or y_col is None):
-            st.warning("Scatter needs two numeric columns.")
+            _chart_warning = "Scatter needs two numeric columns."
         elif chart_type == "Scatter" and x_col == y_col:
-            st.warning("Scatter requires X \u2260 Y")
+            _chart_warning = "Scatter requires X \u2260 Y"
         else:
             chart = build_chart(df, chart_type, x_col, y_col_effective, top_n, show_labels, sort_desc, as_rate, style=_active_style, chart_title=_chart_title)
     except Exception as e:
-        st.error(str(e))
+        _chart_error = str(e)
 
     # Persist chart objects for right panel
     if chart:
@@ -248,7 +233,7 @@ with left:
     else:
         st.session_state["last_chart_obj"] = None
 
-    # Column pool for chip list depends on current mode
+    # Column pool for chip buttons
     if mode_now in ["Scatter", "Histogram"]:
         header_cols = numeric_cols
     else:
@@ -257,71 +242,109 @@ with left:
     MAX_HEADERS = 8
     visible_cols = header_cols[:MAX_HEADERS] if header_cols else []
 
-    # ── Chips (narrow) | Chart image (wide) — depth 2, no further nesting ──
-    chips_col, chart_col = st.columns([1, 4], gap="medium")
+    # ── Tabbed container — Chart first (hero) ──────────────────
+    with st.container(border=True):
+        chart_tab, data_tab = st.tabs(["Chart", "Data"])
 
-    with chips_col:
-        st.caption("Columns")
-        st.radio("Assign to:", ["X", "Y"], horizontal=True, key="assign_target")
+        # ── Chart tab — hero image + always-visible controls ──────
+        with chart_tab:
+            # Hero: chart is the dominant element
+            if _chart_warning:
+                st.warning(_chart_warning)
+            elif _chart_error:
+                st.error(_chart_error)
+            elif png_watermarked:
+                st.image(png_watermarked, use_container_width=True)
 
-        if not visible_cols:
-            st.warning("No columns.")
-        else:
-            for col_name in visible_cols:
-                label = col_name
-                if col_name == st.session_state["x_col"]:
-                    label = f"X \u00b7 {col_name}"
-                elif col_name == st.session_state.get("y_col"):
-                    label = f"Y \u00b7 {col_name}"
-                if st.button(label, use_container_width=True, key=f"hdr_{mode_now}_{col_name}"):
-                    if st.session_state["assign_target"] == "X":
-                        st.session_state["x_col"] = col_name
-                    else:
-                        st.session_state["y_col"] = col_name
-                    st.rerun()
+            if auto_info:
+                st.caption(f"Auto: {auto_info.confidence}% \u2014 {auto_info.reason}")
 
-    with chart_col:
-        if chart:
-            st.image(png_watermarked, use_container_width=True)
+            # Controls — compact strip below the chart, always rendered
+            # (avoids expander collapsing on st.rerun() losing widget state)
+            st.divider()
+            _type_col, _style_col = st.columns([3, 2])
+            with _type_col:
+                st.radio(
+                    "",
+                    ["Auto", "Bar", "Line", "Scatter", "Histogram"],
+                    horizontal=True,
+                    key="chart_type_ui",
+                )
+            with _style_col:
+                st.radio(
+                    "Style",
+                    options=list(STYLES.keys()),
+                    format_func=lambda k: STYLES[k].display_name,
+                    horizontal=True,
+                    key="style_name",
+                )
 
-        if auto_info:
-            st.caption(f"Auto: {auto_info.confidence}% \u2014 {auto_info.reason}")
+            if chart_type == "Bar":
+                bc1, bc2, bc3, bc4 = st.columns(4)
+                with bc1:
+                    st.slider("Top N", 5, 50, st.session_state.get("top_n", 20), 5, key="top_n")
+                with bc2:
+                    st.toggle("Sort desc", value=st.session_state.get("sort_desc", True), key="sort_desc")
+                with bc3:
+                    st.toggle("% of total", value=st.session_state.get("as_rate", False), key="as_rate")
+                with bc4:
+                    st.toggle("Labels", value=st.session_state.get("show_labels", True), key="show_labels")
 
-    # ── Data table (full width of left, below chips+chart) ───
-    st.subheader("Data")
-    if visible_cols:
-        table_df = df[visible_cols].copy()
-        st.dataframe(
-            highlight_used_columns(
-                table_df,
-                [st.session_state.get("x_col"), st.session_state.get("y_col")]
-            ),
-            use_container_width=True,
-            height=160,
-        )
+        # ── Data tab — compact column picker | table ────────────
+        with data_tab:
+            _picker_col, _table_col = st.columns([1, 3])
 
-    # More columns — only when dataset has more than 6 columns
-    if len(df.columns) > 6:
-        with st.expander("More columns"):
-            filter_text = st.text_input(
-                "Filter columns", value="", placeholder="type to filter\u2026", key="filter_columns"
-            ).lower()
+            with _picker_col:
+                st.radio("Assign to:", ["X", "Y"], horizontal=True, key="assign_target")
 
-            pool = numeric_cols if mode_now in ["Scatter", "Histogram"] else df.columns.tolist()
-            filtered = [c for c in pool if filter_text in c.lower()]
-
-            if mode_now in ["Scatter", "Histogram"] and not filtered:
-                st.info("No numeric columns match your filter.")
-            else:
-                more_cols = st.columns(4, gap="small")
-                for i, col_name in enumerate(filtered):
-                    with more_cols[i % 4]:
-                        if st.button(col_name, use_container_width=True, key=f"more_{mode_now}_{col_name}"):
+                if not visible_cols:
+                    st.warning("No columns.")
+                else:
+                    for col_name in visible_cols:
+                        label = col_name
+                        if col_name == st.session_state["x_col"]:
+                            label = f"X \u00b7 {col_name}"
+                        elif col_name == st.session_state.get("y_col"):
+                            label = f"Y \u00b7 {col_name}"
+                        if st.button(label, use_container_width=True, key=f"hdr_{mode_now}_{col_name}"):
                             if st.session_state["assign_target"] == "X":
                                 st.session_state["x_col"] = col_name
                             else:
                                 st.session_state["y_col"] = col_name
                             st.rerun()
+
+            with _table_col:
+                if visible_cols:
+                    st.dataframe(
+                        highlight_used_columns(
+                            df[visible_cols].copy(),
+                            [st.session_state.get("x_col"), st.session_state.get("y_col")],
+                        ),
+                        use_container_width=True,
+                        height=380,
+                    )
+
+            if len(df.columns) > 6:
+                with st.expander("More columns"):
+                    filter_text = st.text_input(
+                        "Filter columns", value="", placeholder="type to filter\u2026", key="filter_columns"
+                    ).lower()
+
+                    pool = numeric_cols if mode_now in ["Scatter", "Histogram"] else df.columns.tolist()
+                    filtered = [c for c in pool if filter_text in c.lower()]
+
+                    if mode_now in ["Scatter", "Histogram"] and not filtered:
+                        st.info("No numeric columns match your filter.")
+                    else:
+                        more_cols = st.columns(4, gap="small")
+                        for i, col_name in enumerate(filtered):
+                            with more_cols[i % 4]:
+                                if st.button(col_name, use_container_width=True, key=f"more_{mode_now}_{col_name}"):
+                                    if st.session_state["assign_target"] == "X":
+                                        st.session_state["x_col"] = col_name
+                                    else:
+                                        st.session_state["y_col"] = col_name
+                                    st.rerun()
 
 # ============================================================
 # RIGHT PANEL — Style / Explain / Export
@@ -330,106 +353,100 @@ with right:
     _df = st.session_state.get("df")
     _chart_type = st.session_state.get("last_chart_type")
 
-    # ---- Style ----
-    st.radio(
-        "Style",
-        options=list(STYLES.keys()),
-        format_func=lambda k: STYLES[k].display_name,
-        horizontal=True,
-        key="style_name",
-    )
+    # Spacer to align with the "Load different data" button on the left
+    if _df is not None:
+        st.markdown('<div style="height: 3.4rem"></div>', unsafe_allow_html=True)
 
-    st.divider()
-
-    # ---- Explain ----
-    st.subheader("Explain")
-    st.caption("AI-powered insight (coming soon).")
-    st.text_area(
-        "Explanation",
-        value="Insight generation will be available in the next release.",
-        height=160,
-        disabled=True,
-        key="explain_text",
-    )
-    st.button("Explain", disabled=True, use_container_width=True, key="btn_explain")
-
-    st.divider()
-
-    # ---- Export ----
-    st.subheader("Export")
-
-    _png_wm = st.session_state.get("last_chart_png_watermarked")
-    _chart_obj = st.session_state.get("last_chart_obj")
-
-    if _png_wm:
-        st.download_button(
-            "PNG (Free, watermarked)",
-            data=_png_wm,
-            file_name="atlas-lite.png",
-            mime="image/png",
-            use_container_width=True,
+    with st.container(border=True):
+        # ---- Explain ----
+        st.caption("Explain — AI insight coming soon")
+        st.text_area(
+            "",
+            value="Insight generation will be available in the next release.",
+            height=120,
+            disabled=True,
+            key="explain_text",
+            label_visibility="collapsed",
         )
-    else:
-        st.button("PNG (Free, watermarked)", disabled=True, use_container_width=True)
+        st.button("Explain", disabled=True, use_container_width=True, key="btn_explain")
 
-    with st.expander("Export Pack (one-off)"):
-        st.caption("Remove watermark \u00b7 unlock high-quality PNG, SVG, Excel, PDF.")
-        st.session_state["export_entitled"] = st.toggle(
-            "Simulate purchase (dev)",
-            value=st.session_state.get("export_entitled", False),
-            key="toggle_entitled",
-        )
+        st.divider()
 
-    if st.session_state.get("export_entitled", False) and _chart_obj is not None:
-        hi_png = chart_to_png_bytes(_chart_obj, scale=3.0)
-        svg = chart_to_svg_bytes(_chart_obj)
+        # ---- Export ----
+        st.caption("Export")
 
-        _x = st.session_state.get("x_col")
-        _y = st.session_state.get("y_col")
+        _png_wm = st.session_state.get("last_chart_png_watermarked")
+        _chart_obj = st.session_state.get("last_chart_obj")
 
-        if _chart_type == "Bar" and _x and _y and _df is not None:
-            _agg = _df[[_x, _y]].dropna().groupby(_x, as_index=False)[_y].sum()
-            if st.session_state.get("as_rate", False):
-                _total = _agg[_y].sum()
-                if _total > 0:
-                    _agg[_y] = (_agg[_y] / _total) * 100
-            _top_n = st.session_state.get("top_n", 20)
-            _agg = _agg.sort_values(_y, ascending=not st.session_state.get("sort_desc", True)).head(_top_n)
-            table_df = _agg
-            subtitle = f"Bar \u00b7 Top {_top_n} by {_y} \u00b7 X={_x} \u00b7 % of total={st.session_state.get('as_rate', False)}"
-
-        elif _chart_type in ("Line", "Scatter") and _x and _y and _df is not None:
-            table_df = _df[[_x, _y]].dropna().head(500)
-            subtitle = f"{_chart_type} \u00b7 X={_x} \u00b7 Y={_y} \u00b7 First 500 rows"
-
-        elif _chart_type == "Histogram" and _x and _df is not None:
-            table_df = _df[[_x]].dropna().head(500)
-            subtitle = f"Histogram \u00b7 X={_x} \u00b7 First 500 rows"
-
+        if _png_wm:
+            st.download_button(
+                "PNG (Free, watermarked)",
+                data=_png_wm,
+                file_name="atlas-lite.png",
+                mime="image/png",
+                use_container_width=True,
+            )
         else:
-            table_df = None
-            subtitle = ""
+            st.button("PNG (Free, watermarked)", disabled=True, use_container_width=True)
 
-        xlsx = df_to_formatted_xlsx_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
-        pdf = df_to_pdf_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
+        with st.expander("Export Pack (one-off)"):
+            st.caption("Remove watermark \u00b7 unlock high-quality PNG, SVG, Excel, PDF.")
+            st.session_state["export_entitled"] = st.toggle(
+                "Simulate purchase (dev)",
+                value=st.session_state.get("export_entitled", False),
+                key="toggle_entitled",
+            )
 
-        st.download_button("PNG (High quality)", hi_png, "atlas.png", "image/png", use_container_width=True)
-        st.download_button("SVG (Vector)", svg, "atlas.svg", "image/svg+xml", use_container_width=True)
-        if xlsx:
-            st.download_button(
-                "Excel (Formatted)",
-                data=xlsx,
-                file_name="atlas-table.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        if pdf:
-            st.download_button(
-                "PDF (Table)",
-                data=pdf,
-                file_name="atlas-table.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-    elif not st.session_state.get("export_entitled", False):
-        st.caption("Unlock Export Pack for high-quality PNG + SVG + Excel + PDF.")
+        if st.session_state.get("export_entitled", False) and _chart_obj is not None:
+            hi_png = chart_to_png_bytes(_chart_obj, scale=3.0)
+            svg = chart_to_svg_bytes(_chart_obj)
+
+            _x = st.session_state.get("x_col")
+            _y = st.session_state.get("y_col")
+
+            if _chart_type == "Bar" and _x and _y and _df is not None:
+                _agg = _df[[_x, _y]].dropna().groupby(_x, as_index=False)[_y].sum()
+                if st.session_state.get("as_rate", False):
+                    _total = _agg[_y].sum()
+                    if _total > 0:
+                        _agg[_y] = (_agg[_y] / _total) * 100
+                _top_n = st.session_state.get("top_n", 20)
+                _agg = _agg.sort_values(_y, ascending=not st.session_state.get("sort_desc", True)).head(_top_n)
+                table_df = _agg
+                subtitle = f"Bar \u00b7 Top {_top_n} by {_y} \u00b7 X={_x} \u00b7 % of total={st.session_state.get('as_rate', False)}"
+
+            elif _chart_type in ("Line", "Scatter") and _x and _y and _df is not None:
+                table_df = _df[[_x, _y]].dropna().head(500)
+                subtitle = f"{_chart_type} \u00b7 X={_x} \u00b7 Y={_y} \u00b7 First 500 rows"
+
+            elif _chart_type == "Histogram" and _x and _df is not None:
+                table_df = _df[[_x]].dropna().head(500)
+                subtitle = f"Histogram \u00b7 X={_x} \u00b7 First 500 rows"
+
+            else:
+                table_df = None
+                subtitle = ""
+
+            xlsx = df_to_formatted_xlsx_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
+            pdf = df_to_pdf_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
+
+            st.download_button("PNG (High quality)", hi_png, "atlas.png", "image/png", use_container_width=True)
+            st.download_button("SVG (Vector)", svg, "atlas.svg", "image/svg+xml", use_container_width=True)
+            if xlsx:
+                st.download_button(
+                    "Excel (Formatted)",
+                    data=xlsx,
+                    file_name="atlas-table.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            if pdf:
+                st.download_button(
+                    "PDF (Table)",
+                    data=pdf,
+                    file_name="atlas-table.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        elif not st.session_state.get("export_entitled", False):
+            st.caption("Unlock Export Pack for high-quality PNG + SVG + Excel + PDF.")
