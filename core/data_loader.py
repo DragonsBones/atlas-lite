@@ -5,6 +5,54 @@ from typing import Union, IO
 
 SUPPORTED_EXTENSIONS = {".csv", ".tsv", ".xlsx"}
 
+# Tokens that, if found anywhere in a normalised column name, suggest PID.
+# Normalisation: lowercase, strip spaces / underscores / hyphens / dots
+# → covers snake_case, camelCase (via lower()), PascalCase, and concatenated forms.
+_PID_TOKENS = {
+    # Identity / demographics
+    "name", "patient", "nhs", "dob", "birth",
+    "email", "address", "postcode", "surname", "forename",
+    "firstname", "lastname", "gender", "sex",
+    # Workflow / staff identifiers
+    "completedby", "createdby", "updatedby", "assignedto",
+    "staffname", "employeename", "username", "userid", "staffid",
+    "worker", "clinician", "consultant", "referrer", "referral",
+}
+
+
+def detect_pid_columns(df: pd.DataFrame) -> list[str]:
+    """
+    Scan column names and a sample of cell values for common PID patterns.
+    Returns the list of column names that appear to contain personal data.
+    Does not raise; safe to call on any DataFrame.
+    """
+    flagged: list[str] = []
+    for col in df.columns:
+        # Normalise: lowercase + strip all separators so camelCase, snake_case,
+        # PascalCase and concatenated variants all reduce to the same form.
+        normalised = col.lower().replace(" ", "").replace("_", "").replace("-", "").replace(".", "")
+        if any(token in normalised for token in _PID_TOKENS):
+            flagged.append(col)
+            continue
+
+        # Value-level scanning for string columns
+        if df[col].dtype == object:
+            sample = df[col].dropna().head(30).astype(str)
+
+            # Email pattern
+            if sample.str.contains(r"@.+\.", regex=True).any():
+                flagged.append(col)
+            # 10-digit NHS number (with or without spaces/hyphens)
+            elif sample.str.replace(r"[\s\-]", "", regex=True).str.fullmatch(r"\d{10}").any():
+                flagged.append(col)
+            # "Surname Firstname" — two Title-Case words (common export format)
+            elif sample.str.match(r"^[A-Z][a-z]+ [A-Z][a-z]+$").any():
+                flagged.append(col)
+            # Reference number: # followed by one or more digits
+            elif sample.str.contains(r"#\d+", regex=True).any():
+                flagged.append(col)
+    return flagged
+
 
 @st.cache_data(show_spinner=False)
 def load_data(uploaded: Union[str, IO]) -> pd.DataFrame:

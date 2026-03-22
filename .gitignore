@@ -16,3 +16,4 @@ Thumbs.db
 
 # Streamlit (if you later add secrets)
 .streamlit/secrets.toml
+.gstack/

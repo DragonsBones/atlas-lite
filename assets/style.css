@@ -1,106 +1,378 @@
-/* ── Atlas Lite — UI Shell Styles ─────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════
+   ATLAS LITE — UI Shell  v2.0
+   Tokens: Navy #1F2F46  ·  Teal #1CA7A6  ·  Warm page #F7F5F2
+   Aesthetic: Financial Times digital — restrained, typographically
+   strong, no gradients, no Streamlit purple.
+   ═══════════════════════════════════════════════════════════════ */
 
-/* Hide dataframe column headers — replaced by chip buttons in the Data panel */
-div[data-testid="stDataFrame"] thead {
-    visibility: collapse !important;
-    height: 0 !important;
-}
-div[data-testid="stDataFrame"] [role="columnheader"] {
-    visibility: collapse !important;
-    height: 0 !important;
-}
-
-/* Tighten the page title block */
-h1 {
-    font-size: 1.4rem !important;
-    font-weight: 700 !important;
-    letter-spacing: -0.01em;
-    margin-bottom: 0 !important;
-}
-
-/* Subheadings — clean, not oversized */
-h2, h3 {
-    font-size: 0.9rem !important;
-    font-weight: 600 !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #888888 !important;
-    margin-bottom: 4px !important;
+/* ── 0. Root tokens ─────────────────────────────────────────── */
+:root {
+  --atlas-navy:      #1F2F46;
+  --atlas-teal:      #1CA7A6;
+  --atlas-teal-h:    #17918F;
+  --atlas-teal-dim:  rgba(28,167,166,0.15);
+  --atlas-border:    #E2DED8;
+  --atlas-text:      #1A1A1A;
+  --atlas-muted:     #7A7268;
+  --sidebar-text:    rgba(255,255,255,0.80);
+  --sidebar-muted:   rgba(255,255,255,0.42);
+  --sidebar-border:  rgba(255,255,255,0.10);
+  --sidebar-surface: rgba(255,255,255,0.07);
 }
 
-/* Captions — muted */
-.stCaption, [data-testid="stCaptionContainer"] {
-    color: #999999 !important;
-    font-size: 0.78rem !important;
-}
-
-/* Chart image — no border, no box shadow */
-img {
-    border-radius: 4px;
-}
-
-/* Radio buttons — tighter */
-div[role="radiogroup"] label {
-    font-size: 0.82rem !important;
-}
-
-/* Buttons — consistent small size with tight vertical padding */
-.stButton button {
-    font-size: 0.82rem !important;
-    padding-top: 0.2rem !important;
-    padding-bottom: 0.2rem !important;
-    line-height: 1.3 !important;
-}
-
-/* Column chip buttons — compact selector buttons inside the Data tab */
-.stTabs .stButton button {
-    font-size: 0.66rem !important;
-    padding-top: 0.1rem !important;
-    padding-bottom: 0.1rem !important;
-    min-height: 0 !important;
-    line-height: 1.2 !important;
-    width: 70% !important;
-}
-
-/* Reduce gap between stacked chip buttons in the column picker */
-.stButton + .stButton {
-    margin-top: 2px !important;
-}
-
-/* Download buttons — match */
-.stDownloadButton button {
-    font-size: 0.82rem !important;
-}
-
-/* Remove default Streamlit top padding */
+/* ── 1. Page shell ──────────────────────────────────────────── */
 .block-container {
-    padding-top: 1.0rem !important;
-    padding-bottom: 1rem !important;
+  padding-top: 1.75rem !important;
+  padding-bottom: 2rem   !important;
+  max-width: 100%        !important;
 }
 
-/* Tighten the gap between radio options in horizontal groups */
+/* ── 2. Sidebar — Atlas Navy ────────────────────────────────── */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div:first-child {
+  background-color: var(--atlas-navy) !important;
+}
+
+/* Text inside sidebar: near-white by default */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] label,
+section[data-testid="stSidebar"] .stMarkdown p {
+  color: var(--sidebar-text) !important;
+  font-size: 0.84rem !important;
+}
+
+section[data-testid="stSidebar"] .stCaption p,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+  color: var(--sidebar-muted) !important;
+  font-size: 0.72rem !important;
+}
+
+section[data-testid="stSidebar"] hr {
+  border-color: var(--sidebar-border) !important;
+  margin: 0.65rem 0 !important;
+}
+
+/* File uploader in sidebar */
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+  background: var(--sidebar-surface) !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 4px !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploader"] small {
+  color: var(--sidebar-muted) !important;
+}
+
+/* Buttons in sidebar — ghost style on navy */
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] .stDownloadButton > button {
+  background: transparent !important;
+  border: 1px solid rgba(255,255,255,0.22) !important;
+  color: var(--sidebar-text) !important;
+  font-size: 0.80rem !important;
+  border-radius: 4px !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover,
+section[data-testid="stSidebar"] .stDownloadButton > button:hover {
+  border-color: var(--atlas-teal) !important;
+  color: var(--atlas-teal) !important;
+}
+
+/* Download button: teal accent in sidebar */
+section[data-testid="stSidebar"] .stDownloadButton > button:not([disabled]) {
+  border-color: var(--atlas-teal) !important;
+  color: var(--atlas-teal) !important;
+}
+
+/* Disabled buttons in sidebar */
+section[data-testid="stSidebar"] .stButton > button[disabled] {
+  opacity: 0.35 !important;
+}
+
+/* Expander in sidebar */
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+  color: var(--sidebar-muted) !important;
+  font-size: 0.76rem !important;
+}
+
+/* ── 3. Atlas wordmark ──────────────────────────────────────── */
+.atlas-wordmark {
+  font-size: 1.30rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #FFFFFF !important;
+  line-height: 1.1;
+  margin: 0 0 0.1rem 0;
+}
+.atlas-wordmark em {
+  color: var(--atlas-teal) !important;
+  font-style: normal;
+}
+.atlas-badge {
+  display: inline-block;
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.45) !important;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 3px;
+  padding: 1px 5px;
+  vertical-align: middle;
+  margin-left: 7px;
+  position: relative;
+  top: -3px;
+}
+
+/* ── 4. Sidebar section labels ──────────────────────────────── */
+.sidebar-label {
+  display: block;
+  font-size: 0.62rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.13em !important;
+  text-transform: uppercase !important;
+  color: var(--sidebar-muted) !important;
+  margin-bottom: 0.45rem !important;
+}
+
+/* ── 5. Style radio in sidebar → teal pill on navy ──────────── */
+section[data-testid="stSidebar"] div[data-testid="stRadio"] > div[role="radiogroup"] {
+  background: var(--sidebar-surface) !important;
+  border-radius: 5px !important;
+  padding: 3px !important;
+  gap: 2px !important;
+  width: 100% !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [data-baseweb="radio"] {
+  background: transparent !important;
+  border-radius: 3px !important;
+  padding: 5px 5px !important;
+  flex: 1 !important;
+  min-width: 0 !important;
+  justify-content: center !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [data-baseweb="radio"] > div:first-child {
+  display: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [data-baseweb="radio"] > div:last-child {
+  color: var(--sidebar-text) !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  padding: 0 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  text-align: center !important;
+  width: 100% !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [data-baseweb="radio"][aria-checked="true"] {
+  background: var(--atlas-teal) !important;
+  box-shadow: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [data-baseweb="radio"][aria-checked="true"] > div:last-child {
+  color: #FFFFFF !important;
+  font-weight: 600 !important;
+}
+
+/* ── 6. Chart type radio (main area) → segmented control ────── */
 div[data-testid="stRadio"] > div[role="radiogroup"] {
-    gap: 0.25rem !important;
+  background: #ECEAE6;
+  border-radius: 6px;
+  padding: 3px;
+  gap: 2px !important;
+  display: inline-flex !important;
+}
+div[data-testid="stRadio"] [data-baseweb="radio"] {
+  background: transparent !important;
+  border-radius: 4px !important;
+  padding: 5px 13px !important;
+  margin: 0 !important;
+  transition: background 0.12s;
+}
+div[data-testid="stRadio"] [data-baseweb="radio"] > div:first-child {
+  display: none !important;
+}
+div[data-testid="stRadio"] [data-baseweb="radio"] > div:last-child {
+  font-size: 0.78rem !important;
+  font-weight: 500 !important;
+  color: var(--atlas-muted) !important;
+  padding: 0 !important;
+}
+div[data-testid="stRadio"] [data-baseweb="radio"][aria-checked="true"] {
+  background: #FFFFFF !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.09) !important;
+}
+div[data-testid="stRadio"] [data-baseweb="radio"][aria-checked="true"] > div:last-child {
+  color: var(--atlas-navy) !important;
+  font-weight: 600 !important;
+}
+/* Radio label above control strip — hide empty labels */
+div[data-testid="stRadio"] > label:empty,
+div[data-testid="stRadio"] > div:first-child:empty {
+  display: none !important;
 }
 
-/* Reduce the blank space Streamlit adds above each widget label */
+/* ── 7. Toggles → teal ──────────────────────────────────────── */
+[data-testid="stToggle"] label span {
+  font-size: 0.80rem !important;
+  color: var(--atlas-muted) !important;
+}
+
+/* ── 8. Slider → teal accent track ─────────────────────────── */
+[data-testid="stSlider"] > label {
+  font-size: 0.78rem !important;
+  color: var(--atlas-muted) !important;
+  font-weight: 500 !important;
+}
+
+/* ── 9. Buttons — main area ─────────────────────────────────── */
+.stButton > button {
+  font-size: 0.81rem !important;
+  font-weight: 500 !important;
+  padding: 0.28rem 0.80rem !important;
+  border-radius: 4px !important;
+  border-color: var(--atlas-border) !important;
+  color: var(--atlas-text) !important;
+  transition: border-color 0.12s, color 0.12s;
+}
+.stButton > button:hover {
+  border-color: var(--atlas-teal) !important;
+  color: var(--atlas-teal) !important;
+}
+.stButton > button:focus {
+  box-shadow: 0 0 0 2px var(--atlas-teal-dim) !important;
+  outline: none !important;
+}
+
+/* Download buttons — subtle teal border */
+.stDownloadButton > button {
+  font-size: 0.81rem !important;
+  border-color: var(--atlas-border) !important;
+}
+.stDownloadButton > button:hover {
+  border-color: var(--atlas-teal) !important;
+  color: var(--atlas-teal) !important;
+}
+
+/* ── 10. Tabs — teal underline on active ────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+  gap: 0 !important;
+  background: transparent !important;
+  border-bottom: 1px solid var(--atlas-border) !important;
+}
+.stTabs [data-baseweb="tab"] {
+  font-size: 0.80rem !important;
+  font-weight: 500 !important;
+  padding: 0.55rem 1.25rem !important;
+  border-bottom: 2px solid transparent !important;
+  color: var(--atlas-muted) !important;
+  background: transparent !important;
+  transition: color 0.12s;
+}
+.stTabs [aria-selected="true"][data-baseweb="tab"] {
+  color: var(--atlas-navy) !important;
+  border-bottom-color: var(--atlas-teal) !important;
+  font-weight: 600 !important;
+  background: transparent !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+  padding-top: 1rem !important;
+}
+
+/* Column chip buttons inside Data tab — compact */
+.stTabs .stButton > button {
+  font-size: 0.70rem !important;
+  padding: 0.16rem 0.55rem !important;
+  line-height: 1.3 !important;
+}
+
+/* ── 11. Containers / cards ─────────────────────────────────── */
+[data-testid="stVerticalBlockBorderWrapper"] > div {
+  border-color: var(--atlas-border) !important;
+  border-radius: 6px !important;
+}
+
+/* ── 12. Typography — main area ─────────────────────────────── */
+h1 {
+  font-size: 1.30rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.02em !important;
+  color: var(--atlas-navy) !important;
+  margin-bottom: 0 !important;
+}
+h2, h3 {
+  font-size: 0.70rem !important;
+  font-weight: 700 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.09em !important;
+  color: var(--atlas-muted) !important;
+  margin-bottom: 4px !important;
+}
+.stCaption p,
+[data-testid="stCaptionContainer"] p {
+  color: var(--atlas-muted) !important;
+  font-size: 0.75rem !important;
+}
+
+/* Section header used in main area */
+.atlas-section {
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--atlas-muted);
+  border-bottom: 1px solid var(--atlas-border);
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.55rem;
+  display: block;
+}
+
+/* ── 13. Dataframe — hide column headers (replaced by chips) ── */
+div[data-testid="stDataFrame"] thead,
+div[data-testid="stDataFrame"] [role="columnheader"] {
+  visibility: collapse !important;
+  height: 0 !important;
+}
+
+/* ── 14. Expander — main area ───────────────────────────────── */
+[data-testid="stExpander"] summary {
+  font-size: 0.80rem !important;
+  font-weight: 500 !important;
+  color: var(--atlas-muted) !important;
+}
+
+/* ── 15. Images ─────────────────────────────────────────────── */
+img {
+  border-radius: 4px;
+}
+
+/* ── 16. Divider ────────────────────────────────────────────── */
+hr {
+  border-color: var(--atlas-border) !important;
+  margin: 0.55rem 0 !important;
+}
+
+/* ── 17. Info / warning / error boxes ───────────────────────── */
+[data-testid="stAlert"] {
+  border-radius: 4px !important;
+  font-size: 0.82rem !important;
+}
+
+/* ── 18. Analyse panel header ───────────────────────────────── */
+.analyse-header {
+  font-size: 0.68rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.11em !important;
+  text-transform: uppercase !important;
+  color: var(--atlas-navy) !important;
+  border-bottom: 2px solid var(--atlas-teal) !important;
+  padding-bottom: 0.30rem !important;
+  margin-top: 1.10rem !important;
+  margin-bottom: 0.55rem !important;
+}
+
+/* ── 19. Widget spacing ─────────────────────────────────────── */
 div[data-testid="stRadio"],
 div[data-testid="stSlider"],
 div[data-testid="stToggle"] {
-    margin-bottom: 0 !important;
-}
-
-/* Compact tab bar */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 2px;
-}
-.stTabs [data-baseweb="tab"] {
-    padding-top: 4px !important;
-    padding-bottom: 4px !important;
-    font-size: 0.82rem !important;
-}
-
-/* Tab panel — breathing room between tab bar and content */
-.stTabs [data-baseweb="tab-panel"] {
-    padding-top: 0.75rem !important;
+  margin-bottom: 0 !important;
 }

@@ -3,6 +3,11 @@ import pandas as pd
 
 from core.themes import AtlasStyle, MIDAS
 
+# Ensure Altair always inlines data as JSON rather than writing temp files.
+# Without this, large-ish DataFrames get a URL reference that vl_convert
+# cannot resolve on a re-render, causing stale or blank charts.
+alt.data_transformers.disable_max_rows()
+
 
 # ------------------------------------
 # Style application
@@ -33,18 +38,133 @@ def agg_bar_data(
     return agg
 
 
+def agg_pareto_data(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    top_n: int = 25,
+) -> pd.DataFrame:
+    """Aggregate data for a Pareto chart: sorted desc, with cumulative_pct column."""
+    d = df[[x_col, y_col]].dropna()
+    if d.empty:
+        raise ValueError(f"No data to display after filtering on {x_col} / {y_col}.")
+    agg = d.groupby(x_col, as_index=False)[y_col].sum()
+    agg = agg.sort_values(y_col, ascending=False).head(top_n).reset_index(drop=True)
+    total = agg[y_col].sum()
+    agg["cumulative_pct"] = (agg[y_col].cumsum() / total * 100) if total > 0 else 0.0
+    return agg
+
+
+# ------------------------------------
+# Pareto Chart
+# ------------------------------------
+
+def pareto_chart(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    top_n: int = 25,
+    threshold: float = 80.0,
+    style: AtlasStyle = MIDAS,
+    chart_title: str = "",
+) -> alt.LayerChart:
+    """Dual-axis Pareto: bars (left axis) + cumulative % line (right axis) + threshold rule."""
+    agg = agg_pareto_data(df, x_col, y_col, top_n=top_n)
+
+    primary = style.data_palette[0]
+    accent = style.accent
+    x_order = agg[x_col].tolist()
+
+    base = alt.Chart(agg).encode(
+        x=alt.X(
+            f"{x_col}:N",
+            sort=x_order,
+            title=None,
+            axis=alt.Axis(labelAngle=-30),
+            scale=alt.Scale(paddingInner=0.30),
+        )
+    )
+
+    bars = base.mark_bar(color=primary, cornerRadiusEnd=style.bar_corner_radius).encode(
+        y=alt.Y(
+            f"{y_col}:Q",
+            title="",
+            axis=alt.Axis(format=",.0f", tickCount=5),
+        ),
+        tooltip=[
+            alt.Tooltip(f"{x_col}:N", title=x_col),
+            alt.Tooltip(f"{y_col}:Q", title=y_col, format=",.0f"),
+            alt.Tooltip("cumulative_pct:Q", title="Cumulative %", format=".1f"),
+        ],
+    )
+
+    line = base.mark_line(
+        color=accent,
+        strokeWidth=style.line_width,
+        point=alt.OverlayMarkDef(color=accent, size=40),
+    ).encode(
+        y=alt.Y(
+            "cumulative_pct:Q",
+            title="Cumulative %",
+            axis=alt.Axis(format=".0f", tickCount=5, titleColor=accent),
+            scale=alt.Scale(domain=[0, 100]),
+        ),
+    )
+
+    threshold_rule = (
+        alt.Chart(pd.DataFrame({"y": [threshold]}))
+        .mark_rule(color=accent, strokeDash=[4, 4], strokeWidth=1.5, opacity=0.7)
+        .encode(y=alt.Y("y:Q", scale=alt.Scale(domain=[0, 100])))
+    )
+
+    props = {
+        "width": CHART_WIDTH,
+        "height": 300,  # +40 to give the rotated right-axis title room
+        # Top-level padding overrides config.padding — extra top space prevents
+        # the "Cumulative %" axis title being clipped at the canvas edge.
+        # style.padding_right accommodates right-axis labels (80px for Cicero).
+        "padding": {"left": style.padding_left, "right": style.padding_right, "top": 50, "bottom": 16},
+    }
+    if chart_title:
+        props["title"] = alt.TitleParams(text=chart_title)
+
+    chart = (
+        alt.layer(bars, line, threshold_rule)
+        .resolve_scale(y="independent")
+        .properties(**props)
+    )
+
+    return _apply_style(chart, style)
+
+
 def _apply_style(chart: alt.Chart, style: AtlasStyle) -> alt.Chart:
     lbl_color = style.axis_label_color or style.text_secondary
     ttl_color = style.axis_title_color or style.text_secondary
     x_lbl = style.axis_x_label_color or lbl_color
     y_lbl = style.axis_y_label_color or lbl_color
+
+    # Build per-axis X kwargs — accumulate only what differs from the global axis config
+    axisX_kw: dict = dict(labelColor=x_lbl, titleColor=ttl_color, labelFontSize=10)
+    if style.disable_x_grid:
+        axisX_kw["grid"] = False
+    if style.x_baseline:
+        # Re-enable domain line on x-axis only (overrides global domain=False)
+        axisX_kw["domain"] = True
+        axisX_kw["domainColor"] = style.x_baseline_color
+        axisX_kw["domainWidth"] = style.x_baseline_width
+
     return (
         chart
         .configure(
-            padding={"left": 24, "right": 72, "top": 20, "bottom": 16},
+            padding={
+                "left": style.padding_left,
+                "right": style.padding_right,
+                "top": 20,
+                "bottom": 16,
+            },
             background=style.bg_page,
         )
-        .configure_view(stroke=None, fill=style.bg_page)
+        .configure_view(stroke=None, strokeWidth=0, fill=style.bg_page)
         .configure_axis(
             labelFontSize=11,
             titleFontSize=11,
@@ -57,13 +177,13 @@ def _apply_style(chart: alt.Chart, style: AtlasStyle) -> alt.Chart:
             domain=style.axis_domain,
             labelLimit=220,
         )
-        .configure_axisX(labelColor=x_lbl, titleColor=ttl_color, labelFontSize=10)
+        .configure_axisX(**axisX_kw)
         .configure_axisY(labelColor=y_lbl, labelFontSize=11)
         .configure_title(
-            fontSize=13,
+            fontSize=style.title_font_size,
             fontWeight=700,
             color=style.text_primary,
-            subtitleFontSize=10,
+            subtitleFontSize=style.subtitle_font_size,
             subtitleColor=style.text_secondary,
             subtitleFontWeight=400,
             anchor="start",
@@ -102,6 +222,7 @@ def bar_chart(
     if orient == "v":
         # Vertical column chart — categories on X, values on Y
         x_sort = "-y" if sort_desc else "ascending"
+        _y_orient = style.y_axis_orient
         base = alt.Chart(agg).encode(
             x=alt.X(
                 f"{x_col}:N",
@@ -113,7 +234,7 @@ def bar_chart(
             y=alt.Y(
                 f"{y_col}:Q",
                 title=x_axis_title,
-                axis=alt.Axis(format=value_format, tickCount=5),
+                axis=alt.Axis(format=value_format, tickCount=5, orient=_y_orient),
                 scale=alt.Scale(domain=[0, x_max]),
             ),
             tooltip=[
@@ -133,7 +254,7 @@ def bar_chart(
             ).encode(text=alt.Text(f"{y_col}:Q", format=value_format))
             chart = alt.layer(bars, labels)
 
-        props = {"width": CHART_WIDTH, "height": 300}
+        props = {"width": CHART_WIDTH, "height": 260}
 
     else:
         # Horizontal bar chart (default) — categories on Y, values on X
@@ -163,8 +284,8 @@ def bar_chart(
             ).encode(text=alt.Text(f"{y_col}:Q", format=value_format))
             chart = alt.layer(bars, labels)
 
-        row_height = 30
-        max_height = 480
+        row_height = 22
+        max_height = 320
         chart_height = min(row_height * len(agg) + 40, max_height)
         props = {"width": CHART_WIDTH, "height": chart_height}
 
@@ -198,7 +319,7 @@ def line_chart(df, x_col, y_col, style: AtlasStyle = MIDAS, chart_title: str = "
     else:
         x_type = "N"
 
-    props = {"width": CHART_WIDTH, "height": 300}
+    props = {"width": CHART_WIDTH, "height": 260}
     if chart_title:
         props["title"] = alt.TitleParams(text=chart_title)
     chart = (
@@ -206,7 +327,7 @@ def line_chart(df, x_col, y_col, style: AtlasStyle = MIDAS, chart_title: str = "
         .mark_line(color=style.data_palette[0], strokeWidth=style.line_width)
         .encode(
             x=alt.X(f"{x_col}:{x_type}", title=None),
-            y=alt.Y(f"{y_col}:Q", title=None),
+            y=alt.Y(f"{y_col}:Q", title=None, axis=alt.Axis(orient=style.y_axis_orient)),
             tooltip=[x_col, y_col],
         )
         .properties(**props)
@@ -231,7 +352,7 @@ def scatter_chart(df, x_col, y_col, style: AtlasStyle = MIDAS, chart_title: str 
 
     d = df[[x_col, y_col]].dropna()
 
-    props = {"width": CHART_WIDTH, "height": 300}
+    props = {"width": CHART_WIDTH, "height": 260}
     if chart_title:
         props["title"] = alt.TitleParams(text=chart_title)
     chart = (
@@ -255,7 +376,7 @@ def scatter_chart(df, x_col, y_col, style: AtlasStyle = MIDAS, chart_title: str 
 def histogram(df, x_col, bins=30, style: AtlasStyle = MIDAS, chart_title: str = "") -> alt.Chart:
     d = df[[x_col]].dropna()
 
-    props = {"width": CHART_WIDTH, "height": 300}
+    props = {"width": CHART_WIDTH, "height": 260}
     if chart_title:
         props["title"] = alt.TitleParams(text=chart_title)
     chart = (
@@ -263,7 +384,7 @@ def histogram(df, x_col, bins=30, style: AtlasStyle = MIDAS, chart_title: str = 
         .mark_bar(color=style.data_palette[0])
         .encode(
             x=alt.X(f"{x_col}:Q", bin=alt.Bin(maxbins=bins), title=None),
-            y=alt.Y("count():Q", title=None),
+            y=alt.Y("count():Q", title=None, axis=alt.Axis(orient=style.y_axis_orient)),
             tooltip=[alt.Tooltip("count():Q", title="Count")],
         )
         .properties(**props)

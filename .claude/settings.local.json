@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(B=~/.claude/skills/gstack/browse/dist/browse)",
+      "Bash(\"$B\" goto:*)",
+      "Bash(\"$B\" screenshot:*)",
+      "Bash(ls /tmp/gstack-sketch*)",
+      "Read(//c/Users/Virj/.gstack/projects/**)",
+      "Read(//c/Users/Virj/.gstack/projects/garrytan-gstack/**)",
+      "Bash(python:*)"
+    ]
+  }
+}

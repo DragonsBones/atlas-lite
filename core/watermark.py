@@ -11,17 +11,29 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 
 def add_png_watermark(
     png_bytes: bytes,
-    text: str = "Atlas Lite",
+    text: str = "Atlas",
     bg_color: str = "#F4EFE6",
+    brand_mark_color: str = "",
 ) -> bytes:
     """
     Stamps an embossed text watermark in the bottom-right corner of the chart
     canvas. The effect uses a light highlight offset and a dark shadow offset
     on a background-toned fill so the mark reads as pressed/raised rather than
     as an obtrusive label. Falls back gracefully if font loading fails.
+
+    If brand_mark_color is set, a thin coloured stripe is drawn at the very
+    top of the canvas — the editorial identity mark used by the Cicero theme.
     """
     base = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
     w, h = base.size
+
+    # Brand mark stripe — drawn directly on base before watermark overlay.
+    # Target: 3px visual at any export scale (scale=2 → 6px, scale=3 → 9px).
+    if brand_mark_color:
+        brand_rgb = _hex_to_rgb(brand_mark_color)
+        brand_draw = ImageDraw.Draw(base)
+        stripe_h = max(4, round(h / 100))  # ≈3px visual at 2× and 3× export scales
+        brand_draw.rectangle([0, 0, w - 1, stripe_h - 1], fill=brand_rgb + (255,))
 
     overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)

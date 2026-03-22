@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 import altair as alt
 
-from core.charts import bar_chart, line_chart, scatter_chart, histogram, agg_bar_data
+from core.charts import bar_chart, line_chart, scatter_chart, histogram, agg_bar_data, agg_pareto_data, pareto_chart
 from core.themes import MIDAS
 
 # Bar charts return LayerChart when show_labels=True, Chart otherwise.
@@ -145,3 +145,42 @@ def test_histogram_with_custom_bins():
     df = pd.DataFrame({"val": range(100)})
     chart = histogram(df, "val", bins=10, style=MIDAS)
     assert isinstance(chart, _ALTAIR_CHART_TYPES)
+
+
+# ---------------------------------------------------------------------------
+# agg_pareto_data
+# ---------------------------------------------------------------------------
+
+def test_agg_pareto_data_adds_cumulative_pct(simple_df):
+    result = agg_pareto_data(simple_df, "cat", "val")
+    assert "cumulative_pct" in result.columns
+
+
+def test_agg_pareto_data_cumulative_pct_reaches_100(simple_df):
+    result = agg_pareto_data(simple_df, "cat", "val")
+    assert abs(result["cumulative_pct"].iloc[-1] - 100.0) < 0.01
+
+
+def test_agg_pareto_data_top_n_respected(simple_df):
+    result = agg_pareto_data(simple_df, "cat", "val", top_n=3)
+    assert len(result) == 3
+
+
+def test_agg_pareto_data_empty_raises():
+    df = pd.DataFrame({"cat": [None, None], "val": [None, None]})
+    with pytest.raises(ValueError):
+        agg_pareto_data(df, "cat", "val")
+
+
+# ---------------------------------------------------------------------------
+# pareto_chart
+# ---------------------------------------------------------------------------
+
+def test_pareto_chart_returns_layer_chart(simple_df):
+    chart = pareto_chart(simple_df, "cat", "val", style=MIDAS)
+    assert isinstance(chart, alt.LayerChart)
+
+
+def test_pareto_chart_handles_threshold_param(simple_df):
+    chart = pareto_chart(simple_df, "cat", "val", threshold=90.0, style=MIDAS)
+    assert isinstance(chart, alt.LayerChart)
