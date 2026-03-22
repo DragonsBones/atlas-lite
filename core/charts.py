@@ -10,6 +10,29 @@ from core.themes import AtlasStyle, MIDAS
 
 CHART_WIDTH = 560
 
+
+def agg_bar_data(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    as_rate: bool = False,
+    top_n: int = 25,
+    sort_desc: bool = True,
+) -> pd.DataFrame:
+    """Aggregate and slice data for a bar chart. Shared by bar_chart() and export."""
+    d = df[[x_col, y_col]].dropna()
+    agg = d.groupby(x_col, as_index=False)[y_col].sum()
+    if as_rate:
+        total = agg[y_col].sum()
+        if total > 0:
+            agg[y_col] = (agg[y_col] / total) * 100
+    # Always take the top-N by value; sort_desc controls display order in the chart
+    agg = agg.sort_values(y_col, ascending=False).head(top_n)
+    if not sort_desc:
+        agg = agg.sort_values(x_col)
+    return agg
+
+
 def _apply_style(chart: alt.Chart, style: AtlasStyle) -> alt.Chart:
     lbl_color = style.axis_label_color or style.text_secondary
     ttl_color = style.axis_title_color or style.text_secondary
@@ -61,70 +84,90 @@ def bar_chart(
     show_labels=True,
     sort_desc=True,
     as_rate=False,
+    orient: str = "h",
     style: AtlasStyle = MIDAS,
     chart_title: str = "",
 ) -> alt.Chart:
 
-    d = df[[x_col, y_col]].dropna()
+    agg = agg_bar_data(df, x_col, y_col, as_rate=as_rate, top_n=top_n, sort_desc=sort_desc)
 
-    agg = d.groupby(x_col, as_index=False)[y_col].sum()
-
-    if as_rate:
-        total = agg[y_col].sum()
-        if total > 0:
-            agg[y_col] = (agg[y_col] / total) * 100
-
-    # Always take the top-N highest-value rows; sort_desc only controls display order
-    agg = agg.sort_values(y_col, ascending=False).head(top_n)
+    if agg.empty:
+        raise ValueError(f"No data to display after filtering on {x_col} / {y_col}.")
 
     value_format = ".1f" if as_rate else ",.0f"
     x_axis_title = "% of total" if as_rate else None
     primary = style.data_palette[0]
-    x_max = agg[y_col].max() * 1.05  # 5% headroom so longest bar never touches boundary
-    # sort_desc=True  → bars ordered by value descending (highest at top)
-    # sort_desc=False → bars ordered alphabetically (A→Z / 0→9)
-    y_sort = "-x" if sort_desc else "ascending"
+    x_max = agg[y_col].max() * 1.05
 
-    base = alt.Chart(agg).encode(
-        y=alt.Y(f"{x_col}:N", sort=y_sort, title=None, scale=alt.Scale(paddingInner=0.40)),
-        x=alt.X(
-            f"{y_col}:Q",
-            title=x_axis_title,
-            axis=alt.Axis(format=value_format, tickCount=5),
-            scale=alt.Scale(domain=[0, x_max]),
-        ),
-        tooltip=[
-            alt.Tooltip(f"{x_col}:N", title=x_col),
-            alt.Tooltip(f"{y_col}:Q", title=y_col, format=value_format),
-        ],
-    )
-
-    bars = base.mark_bar(
-        color=primary,
-        size=10,
-        cornerRadiusEnd=style.bar_corner_radius,
-    )
-
-    chart = bars
-
-    if show_labels:
-        labels = base.mark_text(
-            align="left",
-            baseline="middle",
-            dx=5,
-            fontSize=11,
-            color=style.text_primary,
-        ).encode(
-            text=alt.Text(f"{y_col}:Q", format=value_format)
+    if orient == "v":
+        # Vertical column chart — categories on X, values on Y
+        x_sort = "-y" if sort_desc else "ascending"
+        base = alt.Chart(agg).encode(
+            x=alt.X(
+                f"{x_col}:N",
+                sort=x_sort,
+                title=None,
+                axis=alt.Axis(labelAngle=-30),
+                scale=alt.Scale(paddingInner=0.30),
+            ),
+            y=alt.Y(
+                f"{y_col}:Q",
+                title=x_axis_title,
+                axis=alt.Axis(format=value_format, tickCount=5),
+                scale=alt.Scale(domain=[0, x_max]),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{x_col}:N", title=x_col),
+                alt.Tooltip(f"{y_col}:Q", title=y_col, format=value_format),
+            ],
         )
-        chart = alt.layer(bars, labels)
+        bars = base.mark_bar(color=primary, cornerRadiusEnd=style.bar_corner_radius)
+        chart = bars
+        if show_labels:
+            labels = base.mark_text(
+                align="center",
+                baseline="bottom",
+                dy=-4,
+                fontSize=11,
+                color=style.text_primary,
+            ).encode(text=alt.Text(f"{y_col}:Q", format=value_format))
+            chart = alt.layer(bars, labels)
 
-    row_height = 30
-    max_height = 480
-    calculated_height = row_height * len(agg) + 40
-    chart_height = min(calculated_height, max_height)
+        props = {"width": CHART_WIDTH, "height": 300}
 
-    props = {"width": CHART_WIDTH, "height": chart_height}
+    else:
+        # Horizontal bar chart (default) — categories on Y, values on X
+        y_sort = "-x" if sort_desc else "ascending"
+        base = alt.Chart(agg).encode(
+            y=alt.Y(f"{x_col}:N", sort=y_sort, title=None, scale=alt.Scale(paddingInner=0.40)),
+            x=alt.X(
+                f"{y_col}:Q",
+                title=x_axis_title,
+                axis=alt.Axis(format=value_format, tickCount=5),
+                scale=alt.Scale(domain=[0, x_max]),
+            ),
+            tooltip=[
+                alt.Tooltip(f"{x_col}:N", title=x_col),
+                alt.Tooltip(f"{y_col}:Q", title=y_col, format=value_format),
+            ],
+        )
+        bars = base.mark_bar(color=primary, size=10, cornerRadiusEnd=style.bar_corner_radius)
+        chart = bars
+        if show_labels:
+            labels = base.mark_text(
+                align="left",
+                baseline="middle",
+                dx=5,
+                fontSize=11,
+                color=style.text_primary,
+            ).encode(text=alt.Text(f"{y_col}:Q", format=value_format))
+            chart = alt.layer(bars, labels)
+
+        row_height = 30
+        max_height = 480
+        chart_height = min(row_height * len(agg) + 40, max_height)
+        props = {"width": CHART_WIDTH, "height": chart_height}
+
     if chart_title:
         props["title"] = alt.TitleParams(text=chart_title)
     chart = chart.properties(**props)

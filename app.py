@@ -1,308 +1,486 @@
 import streamlit as st
 import pandas as pd
 
-from core.transform import pick_default_x, pick_default_y
 from core.data_loader import load_data
+from core.charts import bar_chart, line_chart, scatter_chart, histogram, agg_bar_data
 from core.export_render import chart_to_png_bytes, chart_to_svg_bytes
+from core.watermark import add_png_watermark
+from core.recommend import profile_columns, recommend_charts
+from core.themes import get_style, MIDAS, STYLES
 from exports.excel_export import df_to_formatted_xlsx_bytes
 from exports.pdf_export import df_to_pdf_bytes
-from core.watermark import add_png_watermark
-from core.charts import bar_chart, line_chart, scatter_chart, histogram
-from core.recommend import profile_columns, recommend_charts
-
-
-@st.cache_data(show_spinner=False)
-def _cached_profiles(df: pd.DataFrame):
-    return profile_columns(df)
-
-
-@st.cache_data(show_spinner=False)
-def _cached_suggestions(df: pd.DataFrame, user_x: str | None, user_y: str | None):
-    profiles = profile_columns(df)
-    return recommend_charts(df, profiles, user_x=user_x, user_y=user_y)
-
+from payments.entitlement import is_export_entitled
 
 st.set_page_config(page_title="Atlas Lite", layout="wide")
 
-# Ensure entitlement state exists (dev stub for now)
+with open("assets/style.css") as _f:
+    st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
+
+# -----------------------------
+# Session state
+# -----------------------------
+st.session_state.setdefault("df", None)
+st.session_state.setdefault("chart_type_ui", "Auto")
+st.session_state.setdefault("x_col", None)
+st.session_state.setdefault("y_col", None)
+st.session_state.setdefault("assign_target", "X")
 st.session_state.setdefault("export_entitled", False)
+st.session_state.setdefault("top_n", 20)
+st.session_state.setdefault("sort_desc", True)
+st.session_state.setdefault("as_rate", False)
+st.session_state.setdefault("show_labels", True)
+st.session_state.setdefault("bar_flip", False)
+st.session_state.setdefault("style_name", "midas")
+st.session_state.setdefault("last_chart_png_watermarked", None)
+st.session_state.setdefault("last_chart_type", None)
+st.session_state.setdefault("last_chart_obj", None)
+st.session_state.setdefault("chart_type_effective", None)
+st.session_state.setdefault("auto_info", None)
+st.session_state.setdefault("auto_suggestions", [])
 
 # -----------------------------
-# Sidebar: Upload + Controls
+# Helpers
 # -----------------------------
-with st.sidebar:
-    st.image("assets/MAtlas01.png", use_container_width=True)
+def reset_state_for_new_df():
+    st.session_state["x_col"] = None
+    st.session_state["y_col"] = None
+    st.session_state["chart_type_effective"] = None
+    st.session_state["auto_info"] = None
+    st.session_state["auto_suggestions"] = []
 
-    data_mode = st.radio("Data source", ["Upload file", "Demo dataset (dev)"])
+@st.cache_data(show_spinner=False)
+def cached_profiles(df: pd.DataFrame):
+    return profile_columns(df)
 
-    uploaded = None
-    if data_mode == "Upload file":
-        uploaded = st.file_uploader("Upload data (CSV or XLSX)", type=["csv", "xlsx"])
+def highlight_used_columns(df: pd.DataFrame, used_cols: list[str]):
+    used = {c for c in used_cols if c}
 
-    chart_type_ui = st.selectbox("Chart type", ["Auto", "Bar", "Line", "Scatter", "Histogram"])
-    st.subheader("Chart settings")
+    def _highlight(col: pd.Series):
+        return [
+            "background-color: rgba(255, 215, 0, 0.20)" if col.name in used else ""
+            for _ in col
+        ]
 
-# -----------------------------
-# Load data
-# -----------------------------
-df = None
+    return df.head(20).style.apply(_highlight, axis=0)
 
-if data_mode == "Demo dataset (dev)":
-    df = load_data("demo_data/bh_completed_by_mon.csv")
-else:
-    if not uploaded:
-        st.title("Atlas Lite")
-        st.caption("Upload data → choose X and Y → export publication-ready charts.")
-        st.info("Upload a CSV or XLSX to begin.")
-        st.stop()
-    df = load_data(uploaded)
-
-# Clean column names defensively (Altair likes strings)
-df.columns = [str(c).strip() for c in df.columns]
-
-numeric_cols = df.select_dtypes(include="number").columns.tolist()
-cat_cols = [c for c in df.columns if c not in numeric_cols]
-
-if not numeric_cols:
-    st.error("No numeric columns detected.")
-    st.stop()
-
-# -----------------------------
-# Auto recommendation (translate Auto -> concrete chart + suggested defaults)
-# -----------------------------
-auto_info = None
-auto_suggestions = None
-chart_type = chart_type_ui  # working chart type (may be overridden by Auto)
-
-if chart_type_ui == "Auto":
-    auto_suggestions = _cached_suggestions(df, None, None)
-    auto_info = auto_suggestions[0]
-
-    label_map = {"bar": "Bar", "line": "Line", "scatter": "Scatter", "histogram": "Histogram"}
-    chart_type = label_map.get(auto_info.chart_type, "Bar")
+_CHART_LABEL_MAP = {"bar": "Bar", "line": "Line", "scatter": "Scatter", "histogram": "Histogram"}
 
 
-# Defaults (your existing logic; bar-leaning but fine)
-def pick_default_xy(chart_type_local, numeric_cols_local, cat_cols_local, df_local):
-    if chart_type_local == "Scatter":
-        if len(numeric_cols_local) >= 2:
-            return numeric_cols_local[0], numeric_cols_local[1]
-        if len(numeric_cols_local) == 1:
-            return numeric_cols_local[0], numeric_cols_local[0]  # fallback, will be handled
+def set_default_xy_from_auto(df: pd.DataFrame):
+    profiles = cached_profiles(df)
+    suggestions = recommend_charts(df, profiles, user_x=None, user_y=None)
+    best = suggestions[0]
+
+    st.session_state["chart_type_effective"] = _CHART_LABEL_MAP.get(best.chart_type, "Bar")
+
+    if st.session_state["x_col"] is None and best.spec.get("x") in df.columns:
+        st.session_state["x_col"] = best.spec["x"]
+    if st.session_state["y_col"] is None and best.spec.get("y") in df.columns:
+        st.session_state["y_col"] = best.spec["y"]
+
+    st.session_state["auto_info"] = best
+    st.session_state["auto_suggestions"] = suggestions
+
+def pick_fallback_xy(df: pd.DataFrame):
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    cat_cols = [c for c in df.columns if c not in numeric_cols]
+
+    if not numeric_cols:
         return None, None
 
-    if chart_type_local == "Histogram":
-        return (numeric_cols_local[0], None) if numeric_cols_local else (None, None)
+    x = cat_cols[0] if cat_cols else df.columns[0]
+    y = numeric_cols[0]
+    return x, y
 
-    if chart_type_local == "Line":
-        # Prefer a datetime-like column
-        for col in df_local.columns:
-            if pd.api.types.is_datetime64_any_dtype(df_local[col]):
-                return col, numeric_cols_local[0]
-        # Fallback: use first column as X (often Month) and first numeric as Y
-        return df_local.columns[0], numeric_cols_local[0]
-
-    # Bar default (your existing logic)
-    y_default = pick_default_y(numeric_cols_local)
-    x_default = pick_default_x(df_local, cat_cols_local, y_default) if cat_cols_local else df_local.columns[0]
-    return x_default, y_default
-
-
-default_x, default_y = pick_default_xy(chart_type, numeric_cols, cat_cols, df)
-
-# If Auto suggested X/Y, prefer them as defaults (without breaking existing logic)
-if auto_info is not None:
-    sx = auto_info.spec.get("x")
-    sy = auto_info.spec.get("y")
-
-    if sx in df.columns:
-        default_x = sx
-    if sy in df.columns:
-        default_y = sy
-
-# -----------------------------
-# Sidebar: Chart controls (single source of truth)
-# -----------------------------
-with st.sidebar:
-    # X candidates
-    if chart_type in ["Scatter", "Histogram"]:
-        x_candidates = numeric_cols
-        x_label = "X (numeric)"
-    else:
-        x_candidates = cat_cols if cat_cols else df.columns.tolist()
-        x_label = "X"
-
-    if not x_candidates:
-        st.error("No valid X columns for this chart type.")
-        st.stop()
-
-    x_index = x_candidates.index(default_x) if default_x in x_candidates else 0
-    x_col = st.selectbox(x_label, x_candidates, index=x_index)
-
-    # Y candidates
-    if chart_type in ["Bar", "Line", "Scatter"]:
-        if chart_type == "Scatter":
-            y_candidates = [c for c in numeric_cols if c != x_col]
-            if not y_candidates:
-                st.error("Need at least two numeric columns for a scatter chart.")
-                st.stop()
-            y_index = y_candidates.index(default_y) if default_y in y_candidates else 0
-            y_col = st.selectbox("Y (numeric)", y_candidates, index=min(y_index, len(y_candidates) - 1))
-        else:
-            y_index = numeric_cols.index(default_y) if default_y in numeric_cols else 0
-            y_col = st.selectbox("Y (value)", numeric_cols, index=y_index)
-    else:
-        y_col = None
-
-    # Bar-only options
+def build_chart(df, chart_type, x_col, y_col, top_n=20, show_labels=True, sort_desc=True, as_rate=False, orient="h", style=MIDAS, chart_title: str = ""):
     if chart_type == "Bar":
-        sort_desc = st.toggle("Sort descending", value=True)
-        as_rate = st.toggle("Show as % of total", value=False)
-        top_n = st.slider("Top N", 5, 50, 20, 5)
-        show_labels = st.toggle("Show value labels", value=True)
-    else:
-        # safe defaults for non-bar charts
-        sort_desc, as_rate, top_n, show_labels = True, False, 20, False
+        return bar_chart(df, x_col, y_col, top_n=top_n, show_labels=show_labels, sort_desc=sort_desc, as_rate=as_rate, orient=orient, style=style, chart_title=chart_title)
+    if chart_type == "Line":
+        return line_chart(df, x_col, y_col, style=style, chart_title=chart_title)
+    if chart_type == "Scatter":
+        return scatter_chart(df, x_col, y_col, style=style, chart_title=chart_title)
+    if chart_type == "Histogram":
+        return histogram(df, x_col, bins=30, style=style, chart_title=chart_title)
+    return bar_chart(df, x_col, y_col, top_n=top_n, show_labels=show_labels, sort_desc=sort_desc, as_rate=as_rate, style=style, chart_title=chart_title)
 
 # -----------------------------
-# Build selected chart (explicit if/elif chain)
-# -----------------------------
-if chart_type == "Bar":
-    chart_clean = bar_chart(
-        df, x_col, y_col,
-        top_n=top_n,
-        show_labels=show_labels,
-        sort_desc=sort_desc,
-        as_rate=as_rate,
-    )
-elif chart_type == "Line":
-    chart_clean = line_chart(df, x_col, y_col)
-elif chart_type == "Scatter":
-    chart_clean = scatter_chart(df, x_col, y_col)
-elif chart_type == "Histogram":
-    chart_clean = histogram(df, x_col, bins=30)
-else:
-    st.error(f"Unknown chart type: {chart_type}")
-    st.stop()
-
-# -----------------------------
-# Build preview image (watermarked)
-# -----------------------------
-preview_png = chart_to_png_bytes(chart_clean, scale=0.9)
-preview_png = add_png_watermark(preview_png, text="Atlas Lite")
-
-# -----------------------------
-# Pre-calc premium exports ONLY if entitled
-# -----------------------------
-hi_png = svg = xlsx = pdf = None
-
-if st.session_state.get("export_entitled", False):
-    hi_png = chart_to_png_bytes(chart_clean, scale=3.0)
-    svg = chart_to_svg_bytes(chart_clean)
-
-    # Table export:
-    # - Bar: aggregated top-N table
-    # - Line/Scatter: selected columns (first 500 rows)
-    # - Histogram: selected X (first 500 rows)
-    if chart_type == "Bar":
-        d = df[[x_col, y_col]].dropna()
-        agg = d.groupby(x_col, as_index=False)[y_col].sum()
-
-        if as_rate:
-            total = agg[y_col].sum()
-            if total > 0:
-                agg[y_col] = (agg[y_col] / total) * 100
-
-        agg = agg.sort_values(y_col, ascending=not sort_desc).head(top_n)
-        table_df = agg
-        subtitle = f"{chart_type} | Top {top_n} by {y_col} | X={x_col} | % of total={as_rate}"
-
-    elif chart_type in ["Line", "Scatter"]:
-        table_df = df[[x_col, y_col]].dropna().head(500)
-        subtitle = f"{chart_type} | X={x_col} | Y={y_col} | First 500 rows"
-
-    else:  # Histogram
-        table_df = df[[x_col]].dropna().head(500)
-        subtitle = f"{chart_type} | X={x_col} | First 500 rows"
-
-    title = "Atlas Export"
-    xlsx = df_to_formatted_xlsx_bytes(table_df, title=title, subtitle=subtitle)
-    pdf = df_to_pdf_bytes(table_df, title=title, subtitle=subtitle)
-
-# -----------------------------
-# Main: Quadrant layout
+# Page Header
 # -----------------------------
 st.title("Atlas Lite")
-st.caption("Clean charts with presentation-ready exports.")
-st.caption(f"{chart_type_ui} • {uploaded.name if uploaded else 'Demo dataset'}")
+st.caption("Upload \u2192 Auto chart \u2192 Explain (soon) \u2192 Export")
 
-left_top, right_top = st.columns([2, 1], gap="large")
-left_bottom, right_bottom = st.columns([2, 1], gap="large")
+# -----------------------------
+# Layout — outer split
+# -----------------------------
+left, right = st.columns([2, 1], gap="large")
 
-with left_top:
-    st.subheader("Chart")
-    st.image(preview_png, width=720)
-    st.caption(f"{len(df):,} rows • {len(df.columns)} columns")
+# ============================================================
+# LEFT PANEL
+# ============================================================
+with left:
 
-with right_top:
-    st.subheader("Summary")
-    st.metric("Rows", f"{len(df):,}")
-    st.metric("Columns", f"{len(df.columns):,}")
-    st.write(f"**Chart:** {chart_type}")
-    st.write(f"**X:** {x_col}")
-    if y_col:
-        st.write(f"**Y:** {y_col}")
+    # ── Data controls (load / upload) ────────────────────────
+    df = st.session_state["df"]
 
-    if auto_info is not None:
-        st.write(f"**Auto confidence:** {auto_info.confidence}%")
-        st.caption(auto_info.reason)
+    if df is not None:
+        if st.button("Load different data", key="btn_load_new"):
+            st.session_state["df"] = None
+            reset_state_for_new_df()
+            st.rerun()
 
-        if auto_suggestions is not None:
-            with st.expander("Other auto suggestions"):
-                for s in auto_suggestions[1:]:
-                    st.write(f"- `{s.chart_type}` ({s.confidence}%) — {s.reason}")
+    if df is None:
+        upload_cols = st.columns(2)
+        with upload_cols[0]:
+            uploaded = st.file_uploader("Upload CSV, TSV or XLSX", type=["csv", "tsv", "xlsx"], key="uploader_main")
+        with upload_cols[1]:
+            demo = st.toggle("Demo dataset (dev)", value=False, key="toggle_demo")
 
-    if chart_type == "Bar":
-        st.write(f"**Top N:** {top_n}")
-        st.write(f"**Sorted desc:** {sort_desc}")
-        st.write(f"**% of total:** {as_rate}")
-        st.write(f"**Labels:** {show_labels}")
+        if demo:
+            df = load_data("demo_data/bh_completed_by_mon.csv")
+            reset_state_for_new_df()
+            st.session_state["df"] = df
+            st.rerun()
 
-with left_bottom:
-    st.subheader("Data preview")
-    st.dataframe(df.head(15), use_container_width=True, height=260)
+        if uploaded:
+            try:
+                df = load_data(uploaded)
+            except ValueError as _e:
+                st.error(str(_e))
+                st.stop()
+            except Exception as _e:
+                st.error(f"Could not read file: {_e}")
+                st.stop()
+            reset_state_for_new_df()
+            st.session_state["df"] = df
+            st.rerun()
 
-with right_bottom:
-    st.subheader("Export")
+        st.info("Load data to begin.")
+        st.stop()
 
-    st.download_button(
-        "PNG (Free, watermarked)",
-        data=preview_png,
-        file_name="atlas-lite.png",
-        mime="image/png"
-    )
+    # Clean column names
+    df.columns = [str(c).strip() for c in df.columns]
 
-    with st.expander("Export Pack (one-off)"):
-        st.caption("Remove watermark and unlock high-quality exports (PNG, SVG, Excel, PDF).")
-        st.session_state["export_entitled"] = st.toggle(
-            "Simulate purchase (dev)",
-            value=st.session_state.get("export_entitled", False)
-        )
+    # Initialise X/Y if needed
+    if st.session_state["x_col"] is None or st.session_state["y_col"] is None:
+        set_default_xy_from_auto(df)
+        if st.session_state["x_col"] is None or st.session_state["y_col"] is None:
+            x, y = pick_fallback_xy(df)
+            st.session_state["x_col"] = x
+            st.session_state["y_col"] = y
 
-    if st.session_state.get("export_entitled", False):
-        st.download_button("PNG (High quality)", hi_png, "atlas.png", "image/png")
-        st.download_button("SVG (Vector)", svg, "atlas.svg", "image/svg+xml")
-        st.download_button(
-            "Excel (Formatted)",
-            data=xlsx,
-            file_name="atlas-table.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        st.download_button(
-            "PDF (Table)",
-            data=pdf,
-            file_name="atlas-table.pdf",
-            mime="application/pdf"
-        )
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
+    mode_now = st.session_state["chart_type_ui"]
+
+    # Normalise X/Y inline — no extra st.rerun() needed, chart builds in one pass
+    if mode_now == "Scatter":
+        _x = st.session_state.get("x_col")
+        _y = st.session_state.get("y_col")
+        if _x not in numeric_cols or _y not in numeric_cols or _x == _y:
+            if len(numeric_cols) >= 2:
+                st.session_state["x_col"] = numeric_cols[0]
+                st.session_state["y_col"] = numeric_cols[1]
+            elif len(numeric_cols) == 1:
+                st.session_state["x_col"] = numeric_cols[0]
+                st.session_state["y_col"] = numeric_cols[0]
+            else:
+                st.session_state["x_col"] = None
+                st.session_state["y_col"] = None
+    elif mode_now == "Histogram":
+        if st.session_state.get("x_col") not in numeric_cols:
+            st.session_state["x_col"] = numeric_cols[0] if numeric_cols else None
+        st.session_state["y_col"] = None
+
+    x_col = st.session_state["x_col"]
+    y_col = st.session_state["y_col"]
+
+    if mode_now == "Auto":
+        set_default_xy_from_auto(df)
+        chart_type = st.session_state.get("chart_type_effective", "Bar")
+        auto_info = st.session_state.get("auto_info")
     else:
-        st.caption("Unlock Export Pack for high-quality PNG + SVG, formatted Excel + PDF.")
+        chart_type = mode_now
+        auto_info = None
+
+    # Bar controls — read from session state; widgets rendered inside Chart tab
+    if chart_type == "Bar":
+        top_n = st.session_state.get("top_n", 20)
+        sort_desc = st.session_state.get("sort_desc", True)
+        as_rate = st.session_state.get("as_rate", False)
+        show_labels = st.session_state.get("show_labels", True)
+        bar_flip = st.session_state.get("bar_flip", False)
+    else:
+        top_n, sort_desc, as_rate, show_labels, bar_flip = 20, True, False, True, False
+
+    y_col_effective = None if chart_type == "Histogram" else y_col
+    _active_style = get_style(st.session_state.get("style_name", "midas"))
+
+    # Derive chart title from column names
+    if chart_type == "Histogram":
+        _chart_title = f"Distribution of {x_col}"
+    elif y_col_effective and x_col:
+        _chart_title = f"{y_col_effective} by {x_col}"
+    elif x_col:
+        _chart_title = x_col
+    else:
+        _chart_title = "Chart"
+
+    # Build chart before tabs render so result is available in Chart tab
+    chart = None
+    png_watermarked = None
+    _chart_warning = None
+    _chart_error = None
+    try:
+        if chart_type == "Scatter" and (x_col is None or y_col is None):
+            _chart_warning = "Scatter needs two numeric columns."
+        elif chart_type == "Scatter" and x_col == y_col:
+            _chart_warning = "Scatter requires X \u2260 Y"
+        else:
+            chart = build_chart(df, chart_type, x_col, y_col_effective, top_n, show_labels, sort_desc, as_rate, orient="v" if bar_flip else "h", style=_active_style, chart_title=_chart_title)
+    except Exception as e:
+        _chart_error = str(e)
+
+    # Persist chart objects for right panel
+    if chart:
+        _wm_text = f"{_active_style.display_name} \u00b7 Atlas Lite"
+        png_watermarked = add_png_watermark(chart_to_png_bytes(chart, scale=2.0), text=_wm_text, bg_color=_active_style.bg_page)
+        st.session_state["last_chart_png_watermarked"] = png_watermarked
+        st.session_state["last_chart_obj"] = chart
+        st.session_state["last_chart_type"] = chart_type
+    else:
+        st.session_state["last_chart_obj"] = None
+        st.session_state["last_chart_png_watermarked"] = None
+
+    # Column pool for chip buttons
+    if mode_now in ["Scatter", "Histogram"]:
+        header_cols = numeric_cols
+    else:
+        header_cols = df.columns.tolist()
+
+    MAX_HEADERS = 8
+    visible_cols = header_cols[:MAX_HEADERS] if header_cols else []
+
+    # ── Tabbed container — Chart first (hero) ──────────────────
+    with st.container(border=True):
+        chart_tab, data_tab = st.tabs(["Chart", "Data"])
+
+        # ── Chart tab — hero image + always-visible controls ──────
+        with chart_tab:
+            # Hero: chart is the dominant element
+            if _chart_warning:
+                st.warning(_chart_warning)
+            elif _chart_error:
+                st.error(_chart_error)
+            elif png_watermarked:
+                st.image(png_watermarked, use_container_width=True)
+
+            if auto_info:
+                st.caption(f"Auto: {auto_info.confidence}% \u2014 {auto_info.reason}")
+
+                _alt_suggestions = [s for s in st.session_state.get("auto_suggestions", []) if s is not auto_info]
+                if _alt_suggestions:
+                    _alt_cols = st.columns(len(_alt_suggestions))
+                    for _i, _sug in enumerate(_alt_suggestions):
+                        _sug_label = _CHART_LABEL_MAP.get(_sug.chart_type, _sug.chart_type.title())
+                        with _alt_cols[_i]:
+                            if st.button(
+                                f"{_sug_label} ({_sug.confidence}%)",
+                                help=_sug.reason,
+                                use_container_width=True,
+                                key=f"alt_sug_{_i}",
+                            ):
+                                st.session_state["chart_type_ui"] = _sug_label
+                                if _sug.spec.get("x") in df.columns:
+                                    st.session_state["x_col"] = _sug.spec["x"]
+                                if _sug.spec.get("y") in df.columns:
+                                    st.session_state["y_col"] = _sug.spec["y"]
+                                st.rerun()
+
+            # Controls — compact strip below the chart, always rendered
+            # (avoids expander collapsing on st.rerun() losing widget state)
+            st.divider()
+            _type_col, _style_col = st.columns([3, 2])
+            with _type_col:
+                st.radio(
+                    "",
+                    ["Auto", "Bar", "Line", "Scatter", "Histogram"],
+                    horizontal=True,
+                    key="chart_type_ui",
+                )
+            with _style_col:
+                st.radio(
+                    "Style",
+                    options=list(STYLES.keys()),
+                    format_func=lambda k: STYLES[k].display_name,
+                    horizontal=True,
+                    key="style_name",
+                )
+
+            if chart_type == "Bar":
+                bc1, bc2, bc3, bc4, bc5 = st.columns(5)
+                with bc1:
+                    st.slider("Top N", 5, 50, st.session_state.get("top_n", 20), 5, key="top_n")
+                with bc2:
+                    st.toggle("Sort desc", value=st.session_state.get("sort_desc", True), key="sort_desc")
+                with bc3:
+                    st.toggle("% of total", value=st.session_state.get("as_rate", False), key="as_rate")
+                with bc4:
+                    st.toggle("Labels", value=st.session_state.get("show_labels", True), key="show_labels")
+                with bc5:
+                    st.toggle("Flip", value=st.session_state.get("bar_flip", False), key="bar_flip")
+
+        # ── Data tab — compact column picker | table ────────────
+        with data_tab:
+            _picker_col, _table_col = st.columns([1, 3])
+
+            with _picker_col:
+                st.radio("Assign to:", ["X", "Y"], horizontal=True, key="assign_target")
+
+                if not visible_cols:
+                    st.warning("No columns.")
+                else:
+                    for col_name in visible_cols:
+                        label = col_name
+                        if col_name == st.session_state["x_col"]:
+                            label = f"X \u00b7 {col_name}"
+                        elif col_name == st.session_state.get("y_col"):
+                            label = f"Y \u00b7 {col_name}"
+                        if st.button(label, use_container_width=True, key=f"hdr_{mode_now}_{col_name}"):
+                            if st.session_state["assign_target"] == "X":
+                                st.session_state["x_col"] = col_name
+                            else:
+                                st.session_state["y_col"] = col_name
+                            st.rerun()
+
+            with _table_col:
+                if visible_cols:
+                    st.dataframe(
+                        highlight_used_columns(
+                            df[visible_cols].copy(),
+                            [st.session_state.get("x_col"), st.session_state.get("y_col")],
+                        ),
+                        use_container_width=True,
+                        height=380,
+                    )
+
+            if len(df.columns) > 6:
+                with st.expander("More columns"):
+                    filter_text = st.text_input(
+                        "Filter columns", value="", placeholder="type to filter\u2026", key="filter_columns"
+                    ).lower()
+
+                    pool = numeric_cols if mode_now in ["Scatter", "Histogram"] else df.columns.tolist()
+                    filtered = [c for c in pool if filter_text in c.lower()]
+
+                    if mode_now in ["Scatter", "Histogram"] and not filtered:
+                        st.info("No numeric columns match your filter.")
+                    else:
+                        more_cols = st.columns(4, gap="small")
+                        for i, col_name in enumerate(filtered):
+                            with more_cols[i % 4]:
+                                if st.button(col_name, use_container_width=True, key=f"more_{mode_now}_{col_name}"):
+                                    if st.session_state["assign_target"] == "X":
+                                        st.session_state["x_col"] = col_name
+                                    else:
+                                        st.session_state["y_col"] = col_name
+                                    st.rerun()
+
+# ============================================================
+# RIGHT PANEL — Style / Explain / Export
+# ============================================================
+with right:
+    _df = st.session_state.get("df")
+    _chart_type = st.session_state.get("last_chart_type")
+
+    # Spacer to align with the "Load different data" button on the left
+    if _df is not None:
+        st.markdown('<div style="height: 3.45rem"></div>', unsafe_allow_html=True)
+
+    with st.container(border=True):
+        # ---- Explain ----
+        st.caption("Explain — AI insight coming soon")
+        st.text_area(
+            "",
+            value="Insight generation will be available in the next release.",
+            height=120,
+            disabled=True,
+            key="explain_text",
+            label_visibility="collapsed",
+        )
+        st.button("Explain", disabled=True, use_container_width=True, key="btn_explain")
+
+        st.divider()
+
+        # ---- Export ----
+        st.caption("Export")
+
+        _png_wm = st.session_state.get("last_chart_png_watermarked")
+        _chart_obj = st.session_state.get("last_chart_obj")
+
+        if _png_wm:
+            st.download_button(
+                "PNG (Free, watermarked)",
+                data=_png_wm,
+                file_name="atlas-lite.png",
+                mime="image/png",
+                use_container_width=True,
+            )
+        else:
+            st.button("PNG (Free, watermarked)", disabled=True, use_container_width=True)
+
+        with st.expander("Export Pack (one-off)"):
+            st.caption("Remove watermark \u00b7 unlock high-quality PNG, SVG, Excel, PDF.")
+            st.caption("Coming soon — purchase to unlock.")
+
+        _entitled = is_export_entitled()
+        st.session_state["export_entitled"] = _entitled
+
+        if _entitled and _chart_obj is not None:
+            hi_png = chart_to_png_bytes(_chart_obj, scale=3.0)
+            svg = chart_to_svg_bytes(_chart_obj)
+
+            _x = st.session_state.get("x_col")
+            _y = st.session_state.get("y_col")
+
+            if _chart_type == "Bar" and _x and _y and _df is not None:
+                _top_n = st.session_state.get("top_n", 20)
+                _as_rate = st.session_state.get("as_rate", False)
+                _sort_desc = st.session_state.get("sort_desc", True)
+                table_df = agg_bar_data(_df, _x, _y, as_rate=_as_rate, top_n=_top_n, sort_desc=_sort_desc)
+                subtitle = f"Bar \u00b7 Top {_top_n} by {_y} \u00b7 X={_x} \u00b7 % of total={_as_rate}"
+
+            elif _chart_type in ("Line", "Scatter") and _x and _y and _df is not None:
+                table_df = _df[[_x, _y]].dropna().head(500)
+                subtitle = f"{_chart_type} \u00b7 X={_x} \u00b7 Y={_y} \u00b7 First 500 rows"
+
+            elif _chart_type == "Histogram" and _x and _df is not None:
+                table_df = _df[[_x]].dropna().head(500)
+                subtitle = f"Histogram \u00b7 X={_x} \u00b7 First 500 rows"
+
+            else:
+                table_df = None
+                subtitle = ""
+
+            xlsx = df_to_formatted_xlsx_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
+            pdf = df_to_pdf_bytes(table_df, title="Atlas Export", subtitle=subtitle) if table_df is not None else None
+
+            st.download_button("PNG (High quality)", hi_png, "atlas.png", "image/png", use_container_width=True)
+            st.download_button("SVG (Vector)", svg, "atlas.svg", "image/svg+xml", use_container_width=True)
+            if xlsx:
+                st.download_button(
+                    "Excel (Formatted)",
+                    data=xlsx,
+                    file_name="atlas-table.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            if pdf:
+                st.download_button(
+                    "PDF (Table)",
+                    data=pdf,
+                    file_name="atlas-table.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        elif not _entitled:
+            st.caption("Unlock Export Pack for high-quality PNG + SVG + Excel + PDF.")
