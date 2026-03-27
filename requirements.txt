@@ -1,7 +1,8 @@
-streamlit
-pandas
-altair
-vl-convert-python
-openpyxl
-reportlab
-pillow
+streamlit>=1.35.0
+pandas>=2.0.0
+numpy>=1.24.0
+altair>=5.0.0
+vl-convert-python>=1.0.0
+openpyxl>=3.1.0
+reportlab>=4.0.0
+pillow>=10.0.0
