@@ -27,7 +27,7 @@ with open("assets/style.css", encoding="utf-8") as _f:
 # Session state
 # ─────────────────────────────────────────────────────────────
 st.session_state.setdefault("df", None)
-st.session_state.setdefault("chart_type_ui", "Auto")
+st.session_state.setdefault("chart_type_ui", "Pareto")
 st.session_state.setdefault("x_col", None)
 st.session_state.setdefault("y_col", None)
 st.session_state.setdefault("assign_target", "X")
@@ -37,7 +37,9 @@ st.session_state.setdefault("sort_desc", True)
 st.session_state.setdefault("as_rate", False)
 st.session_state.setdefault("show_labels", True)
 st.session_state.setdefault("bar_flip", False)
-st.session_state.setdefault("style_name", "midas")
+st.session_state.setdefault("style_name", "cicero")
+st.session_state.setdefault("user_uploaded", False)
+st.session_state.setdefault("chart_title_override", "")
 st.session_state.setdefault("last_chart_png_watermarked", None)
 st.session_state.setdefault("last_chart_type", None)
 st.session_state.setdefault("last_chart_obj", None)
@@ -117,6 +119,19 @@ def build_chart(
                      sort_desc=sort_desc, as_rate=as_rate, style=style, chart_title=chart_title)
 
 # ─────────────────────────────────────────────────────────────
+# Auto-load demo dataset on first visit (or after reset)
+# ─────────────────────────────────────────────────────────────
+if st.session_state["df"] is None:
+    _demo_df = load_data("demo_data/uk_gov_spending_2024_25.csv")
+    st.session_state["df"] = _demo_df
+    st.session_state["pid_columns"] = []
+    st.session_state["x_col"] = "Department"
+    st.session_state["y_col"] = "Spending_GBP_Billions"
+    st.session_state["chart_type_ui"] = "Pareto"
+    st.session_state["style_name"] = "cicero"
+    st.session_state["chart_title_override"] = "UK Government Spending 2024/25 (£bn)"
+
+# ─────────────────────────────────────────────────────────────
 # SIDEBAR — Navy panel
 # ─────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -129,30 +144,17 @@ with st.sidebar:
     # ── Data source ──────────────────────────────────────────
     st.markdown('<span class="sidebar-label">Data</span>', unsafe_allow_html=True)
 
-    _df_sidebar = st.session_state["df"]
-    if _df_sidebar is not None:
+    if st.session_state.get("user_uploaded", False):
+        _df_sidebar = st.session_state["df"]
         _r, _c = _df_sidebar.shape
         st.caption(f"{_r:,} rows · {_c} columns")
-        if st.button("Load different data", key="btn_load_new", use_container_width=True):
-            st.session_state["df"] = None
-            reset_state_for_new_df()
-            st.rerun()
-    else:
+
         uploaded = st.file_uploader(
-            "Upload CSV, TSV or XLSX",
+            "Try with your own data",
             type=["csv", "tsv", "xlsx"],
             key="uploader_main",
             label_visibility="collapsed",
         )
-        demo = st.toggle("Demo dataset", value=False, key="toggle_demo")
-
-        if demo:
-            _loaded = load_data("demo_data/bh_completed_by_mon.csv")
-            reset_state_for_new_df()
-            st.session_state["df"] = _loaded
-            st.session_state["pid_columns"] = detect_pid_columns(_loaded)
-            st.rerun()
-
         if uploaded:
             try:
                 _loaded = load_data(uploaded)
@@ -164,6 +166,41 @@ with st.sidebar:
                 st.stop()
             reset_state_for_new_df()
             st.session_state["df"] = _loaded
+            st.session_state["user_uploaded"] = True
+            st.session_state["chart_title_override"] = ""
+            st.session_state["pid_columns"] = detect_pid_columns(_loaded)
+            st.rerun()
+
+        if st.button("↩  Reset to demo data", key="btn_reset_demo", use_container_width=True):
+            st.session_state["df"] = None
+            st.session_state["user_uploaded"] = False
+            st.session_state["chart_title_override"] = ""
+            reset_state_for_new_df()
+            st.rerun()
+    else:
+        st.markdown(
+            '<p style="font-size:0.78rem;color:#8A8278;margin:0 0 6px;">Demo: UK Government Spending 2024/25</p>',
+            unsafe_allow_html=True,
+        )
+        uploaded = st.file_uploader(
+            "Try with your own data",
+            type=["csv", "tsv", "xlsx"],
+            key="uploader_main",
+            label_visibility="collapsed",
+        )
+        if uploaded:
+            try:
+                _loaded = load_data(uploaded)
+            except ValueError as _e:
+                st.error(str(_e))
+                st.stop()
+            except Exception as _e:
+                st.error(f"Could not read file: {_e}")
+                st.stop()
+            reset_state_for_new_df()
+            st.session_state["df"] = _loaded
+            st.session_state["user_uploaded"] = True
+            st.session_state["chart_title_override"] = ""
             st.session_state["pid_columns"] = detect_pid_columns(_loaded)
             st.rerun()
 
@@ -342,7 +379,10 @@ y_col_effective = None if chart_type == "Histogram" else y_col
 _active_style   = get_style(st.session_state.get("style_name", "midas"))
 
 # Chart title
-if chart_type == "Histogram":
+_title_override = st.session_state.get("chart_title_override", "")
+if _title_override:
+    _chart_title = _title_override
+elif chart_type == "Histogram":
     _chart_title = f"Distribution of {x_col}"
 elif y_col_effective and x_col:
     _chart_title = f"{y_col_effective} by {x_col}"
