@@ -71,13 +71,13 @@ def load_data(uploaded: Union[str, IO]) -> pd.DataFrame:
         suffix = path.suffix.lower()
 
         if suffix == ".csv":
-            return pd.read_csv(path, encoding="utf-8-sig")
+            return pd.read_csv(path, encoding="utf-8-sig").copy()
 
         if suffix == ".tsv":
-            return pd.read_csv(path, sep="\t", encoding="utf-8-sig")
+            return pd.read_csv(path, sep="\t", encoding="utf-8-sig").copy()
 
         if suffix == ".xlsx":
-            return pd.read_excel(path, engine="openpyxl")
+            return pd.read_excel(path, engine="openpyxl").copy()
 
         raise ValueError(
             f"Unsupported file type '{suffix}'. Please upload a CSV, TSV, or XLSX file."
@@ -87,13 +87,13 @@ def load_data(uploaded: Union[str, IO]) -> pd.DataFrame:
     name = uploaded.name.lower()
 
     if name.endswith(".csv"):
-        return pd.read_csv(uploaded, encoding="utf-8-sig")
+        return pd.read_csv(uploaded, encoding="utf-8-sig").copy()
 
     if name.endswith(".tsv"):
-        return pd.read_csv(uploaded, sep="\t", encoding="utf-8-sig")
+        return pd.read_csv(uploaded, sep="\t", encoding="utf-8-sig").copy()
 
     if name.endswith(".xlsx"):
-        return pd.read_excel(uploaded, engine="openpyxl")
+        return pd.read_excel(uploaded, engine="openpyxl").copy()
 
     ext = Path(name).suffix or "(no extension)"
     raise ValueError(
