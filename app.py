@@ -39,6 +39,7 @@ st.session_state.setdefault("show_labels", True)
 st.session_state.setdefault("bar_flip", False)
 st.session_state.setdefault("style_name", "cicero")
 st.session_state.setdefault("user_uploaded", False)
+st.session_state.setdefault("show_uploader", False)
 st.session_state.setdefault("chart_title_override", "")
 st.session_state.setdefault("last_chart_png_watermarked", None)
 st.session_state.setdefault("last_chart_type", None)
@@ -144,13 +145,28 @@ with st.sidebar:
     # ── Data source ──────────────────────────────────────────
     st.markdown('<span class="sidebar-label">Data</span>', unsafe_allow_html=True)
 
-    if st.session_state.get("user_uploaded", False):
+    _is_uploaded = st.session_state.get("user_uploaded", False)
+
+    if _is_uploaded:
         _df_sidebar = st.session_state["df"]
         _r, _c = _df_sidebar.shape
         st.caption(f"{_r:,} rows · {_c} columns")
+    else:
+        st.caption("Demo: UK Government Spending 2024/25")
 
+    # Primary "Upload" button — toggles the file uploader
+    if st.button(
+        "Upload your own data",
+        key="btn_show_uploader",
+        use_container_width=True,
+        type="primary",
+    ):
+        st.session_state["show_uploader"] = not st.session_state.get("show_uploader", False)
+        st.rerun()
+
+    if st.session_state.get("show_uploader", False):
         uploaded = st.file_uploader(
-            "Try with your own data",
+            "Upload CSV, TSV or XLSX",
             type=["csv", "tsv", "xlsx"],
             key="uploader_main",
             label_visibility="collapsed",
@@ -159,49 +175,36 @@ with st.sidebar:
             try:
                 _loaded = load_data(uploaded)
             except ValueError as _e:
+                st.session_state["show_uploader"] = False
                 st.error(str(_e))
                 st.stop()
             except Exception as _e:
+                st.session_state["show_uploader"] = False
                 st.error(f"Could not read file: {_e}")
                 st.stop()
             reset_state_for_new_df()
             st.session_state["df"] = _loaded
             st.session_state["user_uploaded"] = True
+            st.session_state["show_uploader"] = False
             st.session_state["chart_title_override"] = ""
             st.session_state["pid_columns"] = detect_pid_columns(_loaded)
             st.rerun()
 
-        if st.button("↩  Reset to demo data", key="btn_reset_demo", use_container_width=True):
+    # Reset link — only shown when user data is loaded
+    if _is_uploaded:
+        if st.button("↩ Reset to demo", key="btn_reset_demo", use_container_width=False):
             st.session_state["df"] = None
             st.session_state["user_uploaded"] = False
-            st.session_state["chart_title_override"] = ""
-            reset_state_for_new_df()
-            st.rerun()
-    else:
-        st.markdown(
-            '<p style="font-size:0.78rem;color:#8A8278;margin:0 0 6px;">Demo: UK Government Spending 2024/25</p>',
-            unsafe_allow_html=True,
-        )
-        uploaded = st.file_uploader(
-            "Try with your own data",
-            type=["csv", "tsv", "xlsx"],
-            key="uploader_main",
-            label_visibility="collapsed",
-        )
-        if uploaded:
-            try:
-                _loaded = load_data(uploaded)
-            except ValueError as _e:
-                st.error(str(_e))
-                st.stop()
-            except Exception as _e:
-                st.error(f"Could not read file: {_e}")
-                st.stop()
-            reset_state_for_new_df()
-            st.session_state["df"] = _loaded
-            st.session_state["user_uploaded"] = True
-            st.session_state["chart_title_override"] = ""
-            st.session_state["pid_columns"] = detect_pid_columns(_loaded)
+            st.session_state["show_uploader"] = False
+            st.session_state["chart_type_ui"] = "Pareto"
+            st.session_state["style_name"] = "cicero"
+            st.session_state["x_col"] = "Department"
+            st.session_state["y_col"] = "Spending_GBP_Billions"
+            st.session_state["chart_title_override"] = "UK Government Spending 2024/25 (£bn)"
+            st.session_state["pid_columns"] = []
+            st.session_state["chart_type_effective"] = None
+            st.session_state["auto_info"] = None
+            st.session_state["auto_suggestions"] = []
             st.rerun()
 
     st.markdown("---")
