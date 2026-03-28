@@ -174,5 +174,118 @@ def test_reset_hides_reset_button_after():
     assert not any("Reset" in l for l in labels), f"Reset button still visible: {labels}"
 
 
+# ── 5: XmR chart ─────────────────────────────────────────────────────────────
+
+def _make_xmr_state():
+    """Return AppTest with A&E demo pre-seeded so XmR renders immediately."""
+    import os
+    demo_path = os.path.join(os.path.dirname(__file__), "..", "demo_data", "ae_wait_times_demo.csv")
+    ae_df = pd.read_csv(demo_path)
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["df"]                   = ae_df
+    at.session_state["user_uploaded"]         = False
+    at.session_state["xmr_demo_active"]       = True
+    at.session_state["x_col"]                = "Month"
+    at.session_state["y_col"]                = "Pct_Within_4hrs"
+    at.session_state["chart_type_ui"]         = "XmR (SPC)"
+    at.session_state["chart_title_override"]  = "A&E 4-Hour Wait Performance (XmR)"
+    at.session_state["xmr_rule_1"]            = True
+    at.session_state["xmr_rule_2"]            = True
+    at.session_state["xmr_rule_3"]            = False
+    at.session_state["xmr_rule_4"]            = False
+    return at.run()
+
+
+def test_xmr_chart_renders_without_error():
+    """XmR chart renders with A&E demo data and no unhandled exceptions."""
+    at = _make_xmr_state()
+    assert not at.exception
+
+
+def test_xmr_chart_type_is_xmr():
+    """chart_type_ui should remain XmR after render."""
+    at = _make_xmr_state()
+    assert not at.exception
+    assert ss(at, "chart_type_ui") == "XmR (SPC)"
+
+
+def test_xmr_demo_caption_shown():
+    """Demo caption should mention A&E when xmr_demo_active."""
+    at = _make_xmr_state()
+    assert not at.exception
+    captions = [c.value for c in at.sidebar.caption]
+    assert any("A&E" in c for c in captions), f"Expected A&E caption. Got: {captions}"
+
+
+def test_xmr_spc_rules_toggles_visible():
+    """SPC rules toggles should be visible in sidebar when XmR is selected."""
+    at = _make_xmr_state()
+    assert not at.exception
+    toggle_labels = [t.label for t in at.sidebar.toggle]
+    assert any("Rule 1" in lbl for lbl in toggle_labels), (
+        f"Rule 1 toggle missing. Found: {toggle_labels}"
+    )
+
+
+def test_reset_from_xmr_uploaded_restores_pareto():
+    """Reset from XmR with user-uploaded data restores Pareto chart type."""
+    ae_df = pd.DataFrame({"Month": ["Jan", "Feb"], "Pct": [70.0, 72.0]})
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["df"]              = ae_df
+    at.session_state["user_uploaded"]   = True
+    at.session_state["x_col"]           = "Month"
+    at.session_state["y_col"]           = "Pct"
+    at.session_state["chart_type_ui"]   = "XmR (SPC)"
+    at.session_state["xmr_demo_active"] = False
+    at = at.run()
+    at.sidebar.button(key="btn_reset_demo").click().run()
+    assert not at.exception
+    assert ss(at, "chart_type_ui") == "Pareto"
+
+
+# ── 6: Histogram → other chart type (y_col=None regression) ──────────────────
+
+def _histogram_stale_state(target_chart_type: str):
+    """
+    Simulate the exact session state left after a user was on Histogram
+    and has just switched the radio to `target_chart_type`.
+
+    Histogram sets y_col=None in session state.  If the guard is absent
+    that None propagates into every chart builder and causes a KeyError.
+    """
+    df = pd.read_csv("C:/Users/Virj/atlas-lite/demo_data/uk_gov_spending_2024_25.csv")
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["df"]                  = df
+    at.session_state["user_uploaded"]       = False
+    at.session_state["chart_type_ui"]       = target_chart_type
+    at.session_state["x_col"]              = "Department"
+    at.session_state["y_col"]              = None   # stale None left by Histogram
+    at.session_state["chart_title_override"] = ""
+    return at.run()
+
+
+@pytest.mark.parametrize("target", ["Bar", "Line", "Pareto", "XmR (SPC)"])
+def test_switch_from_histogram_no_error(target):
+    """Switching away from Histogram (y_col=None) must not raise for any chart type."""
+    at = _histogram_stale_state(target)
+    assert not at.exception, (
+        f"Exception when switching to {target} with stale y_col=None: {at.exception}"
+    )
+
+
+def test_switch_from_histogram_to_scatter_no_error():
+    """Scatter has its own normalisation; confirm it also survives the stale state."""
+    df = pd.read_csv("C:/Users/Virj/atlas-lite/demo_data/uk_gov_spending_2024_25.csv")
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["df"]            = df
+    at.session_state["user_uploaded"] = False
+    at.session_state["chart_type_ui"] = "Scatter"
+    at.session_state["x_col"]        = "Department"
+    at.session_state["y_col"]        = None   # stale None left by Histogram
+    at.session_state["chart_title_override"] = ""
+    at = at.run()
+    assert not at.exception
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

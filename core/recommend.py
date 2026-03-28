@@ -25,7 +25,7 @@ class ColProfile:
 
 @dataclass(frozen=True)
 class ChartSuggestion:
-    chart_type: str  # "bar" | "line" | "scatter" | "histogram"
+    chart_type: str  # "bar" | "line" | "scatter" | "pareto" | "xmr"
     confidence: int  # 0..100
     reason: str
     spec: Dict[str, Any]  # suggested encodings/params for your charts.py
@@ -279,25 +279,6 @@ def recommend_charts(
                     "agg": "sum",
                     "top_n": 25,
                     "sort_desc": True,
-                },
-            )
-        )
-
-    # ---- HISTOGRAM (distribution)
-    if best_num:
-        conf = 70
-        if profiles[best_num].n_unique <= 7:
-            conf -= 35  # tiny domain tends to be better as bar
-        if n_rows < 30:
-            conf -= 10
-        suggestions.append(
-            ChartSuggestion(
-                chart_type="histogram",
-                confidence=_clamp_0_100(conf),
-                reason=f"Good for understanding the distribution of {best_num}.",
-                spec={
-                    "x": best_num,
-                    "bins": 30,
                 },
             )
         )

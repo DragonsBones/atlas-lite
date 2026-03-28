@@ -38,6 +38,71 @@ def agg_bar_data(
     return agg
 
 
+def agg_xmr_data(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    active_rules: tuple = (1, 2),
+) -> pd.DataFrame:
+    """Compute XmR statistics and detect SPC signals.
+
+    Returns the input rows (dropna) augmented with:
+      _mean, _ucl, _lcl  — process centre and control limits
+      signal             — True when any active rule fires on that point
+    """
+    d = df[[x_col, y_col]].dropna().reset_index(drop=True)
+    if len(d) < 2:
+        raise ValueError("XmR requires at least 2 data points.")
+
+    values = d[y_col].tolist()
+    n = len(values)
+
+    moving_ranges = [abs(values[i] - values[i - 1]) for i in range(1, n)]
+    mean_mr  = sum(moving_ranges) / len(moving_ranges)
+    mean_val = sum(values) / n
+    ucl = mean_val + 2.66 * mean_mr
+    lcl = mean_val - 2.66 * mean_mr
+
+    d["_mean"] = mean_val
+    d["_ucl"]  = ucl
+    d["_lcl"]  = lcl
+    d["signal"] = False
+
+    # Rule 1: point outside control limits (3-sigma equivalent)
+    if 1 in active_rules:
+        d.loc[(d[y_col] > ucl) | (d[y_col] < lcl), "signal"] = True
+
+    # Rule 2: 8 consecutive points on same side of centre line
+    if 2 in active_rules:
+        for i in range(7, n):
+            window = values[i - 7: i + 1]
+            if all(v > mean_val for v in window) or all(v < mean_val for v in window):
+                for j in range(i - 7, i + 1):
+                    d.loc[j, "signal"] = True
+
+    # Rule 3: 6 consecutive points trending strictly up or down
+    if 3 in active_rules:
+        for i in range(5, n):
+            window = values[i - 5: i + 1]
+            if (all(window[k] < window[k + 1] for k in range(5)) or
+                    all(window[k] > window[k + 1] for k in range(5))):
+                for j in range(i - 5, i + 1):
+                    d.loc[j, "signal"] = True
+
+    # Rule 4: 2 of 3 consecutive points in outer third (~Zone A, 2σ–3σ from mean)
+    if 4 in active_rules:
+        half_range   = ucl - mean_val          # = 2.66 × mean_mr
+        outer_upper  = mean_val + (2.0 / 3.0) * half_range
+        outer_lower  = mean_val - (2.0 / 3.0) * half_range
+        for i in range(2, n):
+            window = values[i - 2: i + 1]
+            if sum(1 for v in window if v > outer_upper or v < outer_lower) >= 2:
+                for j in range(i - 2, i + 1):
+                    d.loc[j, "signal"] = True
+
+    return d
+
+
 def agg_pareto_data(
     df: pd.DataFrame,
     x_col: str,
@@ -134,6 +199,118 @@ def pareto_chart(
         .properties(**props)
     )
 
+    return _apply_style(chart, style)
+
+
+def xmr_chart(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    active_rules: tuple = (1, 2),
+    style: AtlasStyle = MIDAS,
+    chart_title: str = "",
+) -> alt.LayerChart:
+    """XmR (Individuals & Moving Range) SPC chart.
+
+    Layers: individual-values line · normal points · signal points (teal) ·
+    centre line (navy) · UCL/LCL dashed rules (muted red).
+    """
+    plot_data = agg_xmr_data(df, x_col, y_col, active_rules=active_rules)
+    mean_val = float(plot_data["_mean"].iloc[0])
+    ucl      = float(plot_data["_ucl"].iloc[0])
+    lcl      = float(plot_data["_lcl"].iloc[0])
+
+    # ── X-axis type detection ───────────────────────────────────────────────
+    if pd.api.types.is_datetime64_any_dtype(plot_data[x_col]):
+        x_type, x_sort = "T", None
+    elif pd.api.types.is_numeric_dtype(plot_data[x_col]):
+        x_type, x_sort = "Q", None
+    else:
+        parsed = pd.to_datetime(plot_data[x_col], errors="coerce")
+        if parsed.notna().mean() > 0.7:
+            plot_data = plot_data.copy()
+            plot_data[x_col] = parsed
+            x_type, x_sort = "T", None
+        else:
+            x_type = "O"
+            x_sort = plot_data[x_col].tolist()   # preserve row order
+
+    # ── Colours ─────────────────────────────────────────────────────────────
+    signal_color = "#1CA7A6"          # Intelligent Teal
+    line_color   = style.data_palette[0]
+    cl_color     = "#1F2F46"          # Atlas Navy
+    limit_color  = "#C0504D"          # Muted red
+
+    # ── Encodings ───────────────────────────────────────────────────────────
+    def _x(sort=None) -> alt.X:
+        kw: dict = {"title": None, "axis": alt.Axis(labelAngle=-30)}
+        if sort is not None:
+            kw["sort"]  = sort
+            kw["scale"] = alt.Scale(domain=sort)
+        return alt.X(f"{x_col}:{x_type}", **kw)
+
+    y_enc = alt.Y(
+        f"{y_col}:Q",
+        title=None,
+        axis=alt.Axis(orient=style.y_axis_orient, format=".1f", tickCount=5),
+    )
+    main_tip = [
+        alt.Tooltip(f"{x_col}:{x_type}", title=x_col),
+        alt.Tooltip(f"{y_col}:Q", title=y_col, format=".2f"),
+    ]
+
+    # ── Chart layers ────────────────────────────────────────────────────────
+    values_line = (
+        alt.Chart(plot_data)
+        .mark_line(color=line_color, strokeWidth=style.line_width)
+        .encode(x=_x(x_sort), y=y_enc, tooltip=main_tip)
+    )
+
+    norm_df = plot_data[~plot_data["signal"]].copy()
+    norm_points = (
+        alt.Chart(norm_df)
+        .mark_point(color=line_color, size=50, filled=True)
+        .encode(x=_x(x_sort), y=y_enc, tooltip=main_tip)
+    )
+
+    def _hrule(y_val: float, color: str, dash=None, label: str = "") -> alt.Chart:
+        rule_df = pd.DataFrame({"y": [y_val], "label": [label]})
+        mark_kw: dict = {"color": color, "strokeWidth": 1.5}
+        if dash:
+            mark_kw["strokeDash"] = dash
+        return (
+            alt.Chart(rule_df)
+            .mark_rule(**mark_kw)
+            .encode(y=alt.Y("y:Q"), tooltip=[alt.Tooltip("label:N", title="")])
+        )
+
+    cl_rule  = _hrule(mean_val, cl_color,    label=f"Mean: {mean_val:.2f}")
+    ucl_rule = _hrule(ucl,      limit_color, dash=[6, 4], label=f"UCL: {ucl:.2f}")
+    lcl_rule = _hrule(lcl,      limit_color, dash=[6, 4], label=f"LCL: {lcl:.2f}")
+
+    layers: list = [values_line, cl_rule, ucl_rule, lcl_rule]
+
+    if not norm_df.empty:
+        layers.append(norm_points)
+
+    sig_df = plot_data[plot_data["signal"]].copy()
+    if not sig_df.empty:
+        sig_tip = main_tip + [
+            alt.Tooltip("_ucl:Q", title="UCL", format=".2f"),
+            alt.Tooltip("_lcl:Q", title="LCL", format=".2f"),
+        ]
+        sig_points = (
+            alt.Chart(sig_df)
+            .mark_point(color=signal_color, size=130, filled=True)
+            .encode(x=_x(x_sort), y=y_enc, tooltip=sig_tip)
+        )
+        layers.append(sig_points)
+
+    props: dict = {"width": CHART_WIDTH, "height": 280}
+    if chart_title:
+        props["title"] = alt.TitleParams(text=chart_title)
+
+    chart = alt.layer(*layers).properties(**props)
     return _apply_style(chart, style)
 
 

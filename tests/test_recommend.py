@@ -62,12 +62,13 @@ def test_line_suggested_for_datetime_and_numeric():
     assert result[0].chart_type == "line"
 
 
-def test_histogram_suggested_for_numeric_only():
-    # Use repeated values so the column isn't flagged as id_like (unique_ratio < 0.98)
+def test_numeric_only_falls_back_to_bar():
+    # Single numeric column: no categorical/datetime/second-numeric available,
+    # so no scoring rule fires and the fallback bar suggestion is returned.
     df = pd.DataFrame({"val": [1, 2, 3, 4, 5, 1, 2, 3, 4, 5] * 10})
     profiles = profile_columns(df)
     result = recommend_charts(df, profiles)
-    assert result[0].chart_type == "histogram"
+    assert result[0].chart_type == "bar"
 
 
 def test_scatter_eligible_with_two_numeric_cols():

@@ -3,8 +3,9 @@ import pandas as pd
 
 from core.data_loader import load_data, detect_pid_columns
 from core.charts import (
-    bar_chart, line_chart, scatter_chart, histogram,
+    bar_chart, line_chart, scatter_chart,
     agg_bar_data, pareto_chart, agg_pareto_data,
+    xmr_chart, agg_xmr_data,
 )
 from core.export_render import chart_to_png_bytes, chart_to_svg_bytes
 from core.watermark import add_png_watermark
@@ -50,6 +51,13 @@ st.session_state.setdefault("auto_suggestions", [])
 st.session_state.setdefault("pid_columns", [])
 st.session_state.setdefault("_last_rendered_x", None)
 st.session_state.setdefault("_last_rendered_y", None)
+st.session_state.setdefault("xmr_demo_active", False)
+st.session_state.setdefault("xmr_rule_1", True)
+st.session_state.setdefault("xmr_rule_2", True)
+st.session_state.setdefault("xmr_rule_3", False)
+st.session_state.setdefault("xmr_rule_4", False)
+st.session_state.setdefault("_pending_chart_type", None)
+st.session_state.setdefault("_prev_chart_type", None)
 
 # ─────────────────────────────────────────────────────────────
 # Helpers
@@ -77,7 +85,7 @@ def highlight_used_columns(df: pd.DataFrame, used_cols: list[str]):
 
 _CHART_LABEL_MAP = {
     "bar": "Bar", "line": "Line", "scatter": "Scatter",
-    "histogram": "Histogram", "pareto": "Pareto",
+    "pareto": "Pareto", "xmr": "XmR (SPC)",
 }
 
 def set_default_xy_from_auto(df: pd.DataFrame):
@@ -103,6 +111,7 @@ def build_chart(
     df, chart_type, x_col, y_col,
     top_n=20, show_labels=True, sort_desc=True, as_rate=False,
     orient="h", style=MIDAS, chart_title: str = "",
+    xmr_rules: tuple = (1, 2),
 ):
     if chart_type == "Bar":
         return bar_chart(df, x_col, y_col, top_n=top_n, show_labels=show_labels,
@@ -112,10 +121,10 @@ def build_chart(
         return line_chart(df, x_col, y_col, style=style, chart_title=chart_title)
     if chart_type == "Scatter":
         return scatter_chart(df, x_col, y_col, style=style, chart_title=chart_title)
-    if chart_type == "Histogram":
-        return histogram(df, x_col, bins=30, style=style, chart_title=chart_title)
     if chart_type == "Pareto":
         return pareto_chart(df, x_col, y_col, top_n=top_n, style=style, chart_title=chart_title)
+    if chart_type == "XmR (SPC)":
+        return xmr_chart(df, x_col, y_col, active_rules=xmr_rules, style=style, chart_title=chart_title)
     return bar_chart(df, x_col, y_col, top_n=top_n, show_labels=show_labels,
                      sort_desc=sort_desc, as_rate=as_rate, style=style, chart_title=chart_title)
 
@@ -131,6 +140,42 @@ if st.session_state["df"] is None:
     st.session_state["chart_type_ui"] = "Pareto"
     st.session_state["style_name"] = "cicero"
     st.session_state["chart_title_override"] = "UK Government Spending 2024/25 (£bn)"
+
+# ─────────────────────────────────────────────────────────────
+# XmR ↔ Pareto demo swap
+# When the user switches to XmR (SPC) (and hasn't uploaded their own
+# data) swap the demo dataset to the A&E wait-times CSV in-place —
+# no st.rerun() so the rest of this script uses the updated state.
+# Switching to any other type restores UK government spending.
+# ─────────────────────────────────────────────────────────────
+if not st.session_state.get("user_uploaded", False):
+    _ctype_sel = st.session_state.get("chart_type_ui", "Pareto")
+    _xmr_demo  = st.session_state.get("xmr_demo_active", False)
+    if _ctype_sel == "XmR (SPC)" and not _xmr_demo:
+        st.session_state["df"]                   = load_data("demo_data/ae_wait_times_demo.csv")
+        st.session_state["x_col"]                = "Month"
+        st.session_state["y_col"]                = "Pct_Within_4hrs"
+        st.session_state["chart_title_override"]  = "A&E 4-Hour Wait Performance (XmR)"
+        st.session_state["xmr_demo_active"]       = True
+    elif _ctype_sel != "XmR (SPC)" and _xmr_demo:
+        st.session_state["df"]                   = load_data("demo_data/uk_gov_spending_2024_25.csv")
+        st.session_state["x_col"]                = "Department"
+        st.session_state["y_col"]                = "Spending_GBP_Billions"
+        st.session_state["chart_title_override"]  = "UK Government Spending 2024/25 (\u00a3bn)"
+        st.session_state["xmr_demo_active"]       = False
+
+# ─────────────────────────────────────────────────────────────
+# Apply any pending chart type change.
+# Buttons in the main area (rendered AFTER the sidebar) cannot set
+# chart_type_ui directly once the radio widget is instantiated —
+# Streamlit raises StreamlitAPIException.  They write to
+# _pending_chart_type instead; we apply it here, before the sidebar
+# renders, so the radio widget sees the correct value immediately.
+# ─────────────────────────────────────────────────────────────
+_pct = st.session_state.get("_pending_chart_type")
+if _pct:
+    st.session_state["chart_type_ui"]      = _pct
+    st.session_state["_pending_chart_type"] = None
 
 # ─────────────────────────────────────────────────────────────
 # SIDEBAR — Navy panel
@@ -152,7 +197,10 @@ with st.sidebar:
         _r, _c = _df_sidebar.shape
         st.caption(f"{_r:,} rows · {_c} columns")
     else:
-        st.caption("Demo: UK Government Spending 2024/25")
+        if st.session_state.get("xmr_demo_active", False):
+            st.caption("Demo: A&E 4-Hour Wait Performance")
+        else:
+            st.caption("Demo: UK Government Spending 2024/25")
 
     # Primary "Upload" button — toggles the file uploader
     if st.button(
@@ -205,6 +253,11 @@ with st.sidebar:
             st.session_state["chart_type_effective"] = None
             st.session_state["auto_info"] = None
             st.session_state["auto_suggestions"] = []
+            st.session_state["xmr_demo_active"] = False
+            st.session_state["xmr_rule_1"] = True
+            st.session_state["xmr_rule_2"] = True
+            st.session_state["xmr_rule_3"] = False
+            st.session_state["xmr_rule_4"] = False
             st.rerun()
 
     st.markdown("---")
@@ -224,10 +277,18 @@ with st.sidebar:
     st.markdown('<span class="sidebar-label">Chart Type</span>', unsafe_allow_html=True)
     st.radio(
         "",
-        ["Auto", "Bar", "Line", "Scatter", "Histogram", "Pareto"],
+        ["Auto", "Bar", "Line", "Scatter", "Pareto", "XmR (SPC)"],
         key="chart_type_ui",
         label_visibility="collapsed",
     )
+
+    # ── SPC rules (XmR only) ─────────────────────────────────
+    if st.session_state.get("chart_type_ui") == "XmR (SPC)":
+        st.markdown('<span class="sidebar-label">SPC Rules</span>', unsafe_allow_html=True)
+        st.toggle("Rule 1 — Outside limits (3σ)", value=st.session_state.get("xmr_rule_1", True), key="xmr_rule_1")
+        st.toggle("Rule 2 — 8 same side of CL",  value=st.session_state.get("xmr_rule_2", True), key="xmr_rule_2")
+        st.toggle("Rule 3 — 6 consecutive trend", value=st.session_state.get("xmr_rule_3", False), key="xmr_rule_3")
+        st.toggle("Rule 4 — 2 of 3 in outer ⅓",  value=st.session_state.get("xmr_rule_4", False), key="xmr_rule_4")
 
     st.markdown("---")
 
@@ -273,12 +334,12 @@ with st.sidebar:
             _tn = st.session_state.get("top_n", 20)
             table_df = agg_pareto_data(_df_sb, _x_sb, _y_sb, top_n=_tn)
             subtitle  = f"Pareto · Top {_tn} by {_y_sb} · X={_x_sb}"
+        elif _chart_type_sb == "XmR (SPC)" and _x_sb and _y_sb and _df_sb is not None:
+            table_df = _df_sb[[_x_sb, _y_sb]].dropna().head(500)
+            subtitle  = f"XmR · X={_x_sb} · Y={_y_sb}"
         elif _chart_type_sb in ("Line", "Scatter") and _x_sb and _y_sb and _df_sb is not None:
             table_df = _df_sb[[_x_sb, _y_sb]].dropna().head(500)
             subtitle  = f"{_chart_type_sb} · X={_x_sb} · Y={_y_sb} · First 500 rows"
-        elif _chart_type_sb == "Histogram" and _x_sb and _df_sb is not None:
-            table_df = _df_sb[[_x_sb]].dropna().head(500)
-            subtitle  = f"Histogram · X={_x_sb} · First 500 rows"
         else:
             table_df, subtitle = None, ""
 
@@ -340,22 +401,49 @@ if st.session_state["x_col"] is None or st.session_state["y_col"] is None:
         st.session_state["y_col"] = y
 
 numeric_cols = df.select_dtypes(include="number").columns.tolist()
+all_cols     = df.columns.tolist()
+cat_cols     = [c for c in all_cols if c not in numeric_cols]
 mode_now     = st.session_state["chart_type_ui"]
 
-# Normalise X/Y for chart types with constraints
-if mode_now == "Scatter":
-    _x, _y = st.session_state.get("x_col"), st.session_state.get("y_col")
-    if _x not in numeric_cols or _y not in numeric_cols or _x == _y:
+# ── Centralised chart-type change handler ────────────────────────────────────
+# Runs before any widget or chart render.  On every chart-type switch, resets
+# x_col / y_col to safe defaults for the incoming type so no chart receives
+# stale columns (e.g. numeric x_col left over from Scatter).
+_prev_type = st.session_state.get("_prev_chart_type")
+if _prev_type != mode_now:
+    if mode_now == "Scatter":
+        # Both axes must be numeric and different.
         if len(numeric_cols) >= 2:
-            st.session_state["x_col"], st.session_state["y_col"] = numeric_cols[0], numeric_cols[1]
+            st.session_state["x_col"] = numeric_cols[0]
+            st.session_state["y_col"] = numeric_cols[1]
         elif len(numeric_cols) == 1:
             st.session_state["x_col"] = st.session_state["y_col"] = numeric_cols[0]
         else:
             st.session_state["x_col"] = st.session_state["y_col"] = None
-elif mode_now == "Histogram":
-    if st.session_state.get("x_col") not in numeric_cols:
-        st.session_state["x_col"] = numeric_cols[0] if numeric_cols else None
-    st.session_state["y_col"] = None
+    elif mode_now == "Auto":
+        # Let auto-recommend re-derive both columns fresh.
+        st.session_state["x_col"] = None
+        st.session_state["y_col"] = None
+    else:
+        # Bar, Line, Pareto, XmR (SPC): x = any column (categorical preferred),
+        # y = numeric.  Only fix what is wrong; preserve valid existing choices.
+        _x = st.session_state.get("x_col")
+        _y = st.session_state.get("y_col")
+        if _y not in numeric_cols:
+            st.session_state["y_col"] = numeric_cols[0] if numeric_cols else None
+        if _x in numeric_cols and cat_cols:
+            # x was forced numeric by a previous Scatter selection — swap to categorical.
+            st.session_state["x_col"] = cat_cols[0]
+        if st.session_state.get("x_col") not in all_cols:
+            st.session_state["x_col"] = cat_cols[0] if cat_cols else (numeric_cols[0] if numeric_cols else None)
+    st.session_state["_prev_chart_type"] = mode_now
+
+# ── Final existence guard ────────────────────────────────────────────────────
+# Catches any remaining None or stale column references regardless of path taken.
+if st.session_state.get("y_col") not in all_cols:
+    st.session_state["y_col"] = numeric_cols[0] if numeric_cols else None
+if st.session_state.get("x_col") not in all_cols:
+    st.session_state["x_col"] = cat_cols[0] if cat_cols else (numeric_cols[0] if numeric_cols else None)
 
 x_col = st.session_state["x_col"]
 y_col = st.session_state["y_col"]
@@ -378,15 +466,26 @@ if chart_type in ("Bar", "Pareto"):
 else:
     top_n, sort_desc, as_rate, show_labels, bar_flip = 20, True, False, True, False
 
-y_col_effective = None if chart_type == "Histogram" else y_col
+# XmR active rules
+if chart_type == "XmR (SPC)":
+    xmr_rules = tuple(
+        r for r, on in [
+            (1, st.session_state.get("xmr_rule_1", True)),
+            (2, st.session_state.get("xmr_rule_2", True)),
+            (3, st.session_state.get("xmr_rule_3", False)),
+            (4, st.session_state.get("xmr_rule_4", False)),
+        ] if on
+    )
+else:
+    xmr_rules = (1, 2)
+
+y_col_effective = y_col
 _active_style   = get_style(st.session_state.get("style_name", "midas"))
 
 # Chart title
 _title_override = st.session_state.get("chart_title_override", "")
 if _title_override:
     _chart_title = _title_override
-elif chart_type == "Histogram":
-    _chart_title = f"Distribution of {x_col}"
 elif y_col_effective and x_col:
     _chart_title = f"{y_col_effective} by {x_col}"
 elif x_col:
@@ -420,6 +519,7 @@ try:
             orient=_orient,
             style=_active_style,
             chart_title=_chart_title,
+            xmr_rules=xmr_rules,
         )
 except Exception as e:
     _chart_error = str(e)
@@ -444,7 +544,7 @@ else:
     st.session_state["last_chart_png_watermarked"] = None
 
 # Column pool for chip buttons
-header_cols  = numeric_cols if mode_now in ["Scatter", "Histogram"] else df.columns.tolist()
+header_cols  = numeric_cols if mode_now == "Scatter" else df.columns.tolist()
 MAX_HEADERS  = 8
 visible_cols = header_cols[:MAX_HEADERS] if header_cols else []
 
@@ -481,7 +581,11 @@ with _chart_col:
                                 use_container_width=True,
                                 key=f"alt_sug_{_i}",
                             ):
-                                st.session_state["chart_type_ui"] = _sug_label
+                                # Cannot set chart_type_ui directly here — the
+                                # sidebar radio widget has already rendered.
+                                # Write to _pending_chart_type; it is applied
+                                # at the top of the next run before the sidebar.
+                                st.session_state["_pending_chart_type"] = _sug_label
                                 if _sug.spec.get("x") in df.columns:
                                     st.session_state["x_col"] = _sug.spec["x"]
                                 if _sug.spec.get("y") in df.columns:
@@ -506,6 +610,17 @@ with _chart_col:
                 pc1, _pc_rest = st.columns([1, 4])
                 with pc1:
                     st.slider("Top N", 5, 50, st.session_state.get("top_n", 20), 5, key="top_n")
+            elif chart_type == "XmR (SPC)":
+                _xmr_active = [
+                    r for r, on in [
+                        ("Rule 1", st.session_state.get("xmr_rule_1", True)),
+                        ("Rule 2", st.session_state.get("xmr_rule_2", True)),
+                        ("Rule 3", st.session_state.get("xmr_rule_3", False)),
+                        ("Rule 4", st.session_state.get("xmr_rule_4", False)),
+                    ] if on
+                ]
+                _rules_label = ", ".join(_xmr_active) if _xmr_active else "No rules active"
+                st.caption(f"Signal rules active: {_rules_label} · Toggle in sidebar")
 
         # ── Data tab ──────────────────────────────────────────
         with data_tab:
@@ -549,9 +664,9 @@ with _chart_col:
                         "Filter columns", value="", placeholder="type to filter\u2026",
                         key="filter_columns",
                     ).lower()
-                    pool     = numeric_cols if mode_now in ["Scatter", "Histogram"] else df.columns.tolist()
+                    pool     = numeric_cols if mode_now == "Scatter" else df.columns.tolist()
                     filtered = [c for c in pool if filter_text in c.lower()]
-                    if mode_now in ["Scatter", "Histogram"] and not filtered:
+                    if mode_now == "Scatter" and not filtered:
                         st.info("No numeric columns match your filter.")
                     else:
                         more_cols = st.columns(4, gap="small")
